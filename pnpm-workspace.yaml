@@ -1,0 +1,7 @@
+packages:
+  - contract
+  - daemon
+  - native
+
+onlyBuiltDependencies:
+  - esbuild
