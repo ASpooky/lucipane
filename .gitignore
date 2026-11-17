@@ -1,0 +1,17 @@
+# Node
+node_modules/
+dist/
+*.log
+
+# Rust / Tauri
+target/
+src-tauri/gen/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Env
+.env
+.env.*
