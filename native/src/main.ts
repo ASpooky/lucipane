@@ -3,16 +3,19 @@
 // - Draw mode (toggled by a global hotkey in Rust) makes the overlay take the mouse:
 //   left-drag draws. Single keys: A arrow, B box, E eraser, C clear, Esc exit.
 // - Finished strokes are saved to the board file for the `lucipane capture` CLI, and
-//   `lucipane clear` arrives as a "clear" event.
+//   `lucipane clear` and `lucipane draw` (agents drawing in blue) arrive as events.
 // - In a plain browser (http://localhost:1420) draw mode is always on, for quick testing.
 
+import { ClearEvent, Stroke } from "@lucipane/contract";
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
+  addStroke,
   type Board,
   beginArrow,
   beginBox,
   beginStroke,
+  clearAuthor,
   clearBoard,
   emptyBoard,
   endStroke,
@@ -110,8 +113,18 @@ async function listenToRust(): Promise<void> {
   channel.onmessage = (ev) => update(applyPenEvent(board, ev));
   await invoke("subscribe_pen", { onEvent: channel });
   await listen<boolean>("draw-mode", (e) => setDrawMode(e.payload));
-  // Sent when `lucipane clear` is run while the overlay is up.
-  await listen("clear", () => update(clearBoard(board)));
+  // Forwarded `lucipane clear [--agent]` and `lucipane draw` commands. Their payloads come
+  // from another process, so they are validated against the contract before use.
+  await listen<unknown>("clear", (e) => {
+    const request = ClearEvent.safeParse(e.payload);
+    if (!request.success) return console.error("invalid clear event", request.error);
+    update(request.data.agentOnly ? clearAuthor(board, "agent") : clearBoard(board));
+  });
+  await listen<unknown>("agent-draw", (e) => {
+    const stroke = Stroke.safeParse(e.payload);
+    if (!stroke.success) return console.error("invalid agent-draw event", stroke.error);
+    update(addStroke(board, stroke.data));
+  });
 }
 
 function exitDrawMode(): void {

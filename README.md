@@ -21,12 +21,15 @@ Agents use the same executable as a CLI:
 
 ```sh
 lucipane capture [--out <file.png>]   # screenshot (with your drawings) + annotations as JSON
-lucipane clear                        # erase everything on the overlay
+lucipane clear [--agent]              # erase everything (or only what agents drew)
+lucipane draw box --x X --y Y --w W --h H         # draw as the agent, in blue,
+lucipane draw arrow --from X,Y --to X,Y           # in pixels of the capture image
+lucipane draw text --x X --y Y --text TEXT
 ```
 
 `capture` runs in its own process: the drawings are part of the screenshot, and their
 geometry comes from a board file the overlay keeps up to date
-(`<data dir>/dev.aspooky.lucipane/board.json`). `clear` is forwarded to the running overlay.
+(`<data dir>/dev.aspooky.lucipane/board.json`). `clear` and `draw` are forwarded to the running overlay.
 No network port is opened.
 
 ### Agent skill

@@ -1,9 +1,11 @@
 import { BoardSnapshot, CONTRACT_VERSION } from "@lucipane/contract";
 import { describe, expect, it } from "vitest";
 import {
+  addStroke,
   beginArrow,
   beginBox,
   beginStroke,
+  clearAuthor,
   clearBoard,
   emptyBoard,
   endStroke,
@@ -239,5 +241,33 @@ describe("text", () => {
   it("is not changed by extend", () => {
     const b = { strokes: [], current: text("hi") };
     expect(extendStroke(b, p(0, 0))).toBe(b);
+  });
+});
+
+describe("agent strokes", () => {
+  const agentBox = {
+    kind: "box" as const,
+    author: "agent" as const,
+    from: p(0, 0),
+    to: p(10, 10),
+  };
+
+  it("adds a finished stroke without touching the one in progress", () => {
+    const drawing = beginStroke(emptyBoard(), p(1, 1));
+    const b = addStroke(drawing, agentBox);
+    expect(b.strokes).toEqual([agentBox]);
+    expect(b.current).toBe(drawing.current);
+  });
+
+  it("clears only one author's strokes", () => {
+    const user = endStroke(beginStroke(emptyBoard(), p(5, 5)));
+    const b = addStroke(user, agentBox);
+    expect(clearAuthor(b, "agent").strokes).toEqual(user.strokes);
+    expect(clearAuthor(b, "user").strokes).toEqual([agentBox]);
+  });
+
+  it("returns the same board when the author has no strokes", () => {
+    const b = endStroke(beginStroke(emptyBoard(), p(5, 5)));
+    expect(clearAuthor(b, "agent")).toBe(b);
   });
 });

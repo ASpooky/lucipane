@@ -3,6 +3,7 @@ mod board;
 pub mod cli;
 mod focus;
 mod pen;
+pub mod shape;
 
 use std::sync::Mutex;
 
@@ -120,14 +121,34 @@ fn remove_board() {
 /// Another `lucipane ...` was started while this overlay is running; the single-instance
 /// plugin hands us its arguments and exits it.
 fn on_second_instance(app: &AppHandle, argv: &[String]) {
-    // argv[0] is the program path. Only `clear` is forwarded: capture and help run in the
-    // other process and never get here, and a plain second launch has nothing to do.
-    if let Ok(Some(cli::Command::Clear)) = cli::parse(argv.get(1..).unwrap_or_default())
-        && let Err(e) = app.emit("clear", ())
-    {
-        eprintln!("failed to forward clear: {e}");
+    // argv[0] is the program path. Capture and help run in the other process and never get
+    // here, and a plain second launch has nothing to do.
+    let result = match cli::parse(argv.get(1..).unwrap_or_default()) {
+        Ok(Some(cli::Command::Clear { agent_only })) => {
+            app.emit("clear", ClearRequest { agent_only })
+        }
+        Ok(Some(cli::Command::Draw(shape))) => {
+            let scale = app.state::<OverlayScale>().0;
+            app.emit("agent-draw", shape::to_stroke(&shape, scale))
+        }
+        _ => Ok(()),
+    };
+    if let Err(e) = result {
+        eprintln!("failed to forward a command to the overlay: {e}");
     }
 }
+
+/// Payload of the "clear" event (see `listenToRust` in main.ts).
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClearRequest {
+    /// Erase only the agent's strokes.
+    agent_only: bool,
+}
+
+/// Image (physical) pixels per CSS pixel on the overlay's display, for converting the
+/// coordinates of `lucipane draw`.
+struct OverlayScale(f64);
 
 /// Cover the primary monitor with the overlay window, make it click-through, then show it.
 /// Spike: single display only. Multi-monitor (one window per monitor) comes later.
@@ -238,6 +259,7 @@ pub fn run(forwarded: Option<cli::Command>) {
             let handle = app.handle();
             let viewport = show_overlay(handle)?;
             reset_board(viewport.scale);
+            app.manage(OverlayScale(viewport.scale));
             #[cfg(desktop)]
             register_draw_mode_hotkey(handle)?;
             spawn_mouse_hook(handle.clone(), viewport);
