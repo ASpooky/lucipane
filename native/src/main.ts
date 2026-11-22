@@ -2,6 +2,8 @@
 // - Middle-button drag anywhere draws via the Rust global mouse hook (a Channel).
 // - Draw mode (toggled by a global hotkey in Rust) makes the overlay take the mouse:
 //   left-drag draws, boxes or erases. Single keys: B box, E eraser, C clear, Esc exit.
+// - Finished strokes are saved to the board file for the `lucipane capture` CLI, and
+//   `lucipane clear` arrives as a "clear" event.
 // - In a plain browser (http://localhost:1420) draw mode is always on, for quick testing.
 
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
@@ -16,6 +18,7 @@ import {
   eraseAt,
   extendStroke,
   type Point,
+  toSnapshot,
 } from "./board.ts";
 import { applyPenEvent, type PenEvent } from "./pen.ts";
 import { type Pen, render } from "./render.ts";
@@ -48,8 +51,19 @@ let erasing = false;
 
 function update(next: Board): void {
   if (next === board) return;
+  const finishedChanged = next.strokes !== board.strokes;
   board = next;
   render(ctx, board, pen);
+  if (finishedChanged) saveBoard();
+}
+
+/** Keep the board file current for `lucipane capture`. Only finished strokes count. */
+function saveBoard(): void {
+  if (!isTauri()) return;
+  const snapshot = toSnapshot(board, window.devicePixelRatio);
+  invoke("save_board", { snapshot }).catch((e: unknown) => {
+    console.error("failed to save the board", e);
+  });
 }
 
 function setDrawMode(enabled: boolean): void {
@@ -80,6 +94,8 @@ async function listenToRust(): Promise<void> {
   channel.onmessage = (ev) => update(applyPenEvent(board, ev));
   await invoke("subscribe_pen", { onEvent: channel });
   await listen<boolean>("draw-mode", (e) => setDrawMode(e.payload));
+  // Sent when `lucipane clear` is run while the overlay is up.
+  await listen("clear", () => update(clearBoard(board)));
 }
 
 function exitDrawMode(): void {

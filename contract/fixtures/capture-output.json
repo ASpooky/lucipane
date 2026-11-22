@@ -1,0 +1,15 @@
+{
+  "contractVersion": 1,
+  "image": {
+    "path": "C:\\Users\\me\\AppData\\Local\\Temp\\lucipane\\capture.png",
+    "width": 2880,
+    "height": 1620
+  },
+  "annotations": [
+    {
+      "kind": "freehand",
+      "points": [[15, 30], [45, 60], [75, 30]]
+    },
+    { "kind": "box", "x": 15, "y": 0, "width": 30, "height": 60 }
+  ]
+}
