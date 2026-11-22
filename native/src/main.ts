@@ -1,13 +1,14 @@
 // Overlay canvas.
 // - Middle-button drag anywhere draws via the Rust global mouse hook (a Channel).
 // - Draw mode (toggled by a global hotkey in Rust) makes the overlay take the mouse:
-//   left-drag draws or erases, and single keys work: E eraser, C clear, Esc exit.
+//   left-drag draws, boxes or erases. Single keys: B box, E eraser, C clear, Esc exit.
 // - In a plain browser (http://localhost:1420) draw mode is always on, for quick testing.
 
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   type Board,
+  beginBox,
   beginStroke,
   clearBoard,
   emptyBoard,
@@ -19,7 +20,9 @@ import {
 import { applyPenEvent, type PenEvent } from "./pen.ts";
 import { type Pen, render } from "./render.ts";
 
-type Tool = "pen" | "eraser";
+type Tool = "pen" | "box" | "eraser";
+
+const TOOL_LABELS: Record<Tool, string> = { pen: "Pen", box: "Box", eraser: "Eraser" };
 
 const ERASER_RADIUS = 12;
 
@@ -59,7 +62,7 @@ function setDrawMode(enabled: boolean): void {
 function setTool(next: Tool): void {
   tool = next;
   document.body.classList.toggle("tool-eraser", next === "eraser");
-  if (hudTool) hudTool.textContent = next === "eraser" ? "Eraser" : "Pen";
+  if (hudTool) hudTool.textContent = TOOL_LABELS[next];
 }
 
 function resize(): void {
@@ -96,7 +99,8 @@ function listenToPointer(): void {
       erasing = true;
       update(eraseAt(board, toPoint(e), ERASER_RADIUS));
     } else {
-      update(beginStroke(board, toPoint(e)));
+      const begin = tool === "box" ? beginBox : beginStroke;
+      update(begin(board, toPoint(e)));
     }
   });
   canvas.addEventListener("pointermove", (e) => {
@@ -119,6 +123,9 @@ function listenToKeys(): void {
     switch (e.key.toLowerCase()) {
       case "e":
         setTool(tool === "eraser" ? "pen" : "eraser");
+        break;
+      case "b":
+        setTool(tool === "box" ? "pen" : "box");
         break;
       case "c":
         update(clearBoard(board));

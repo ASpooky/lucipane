@@ -1,11 +1,11 @@
 // Draws a Board onto a 2D canvas context. Holds no state.
 
-import type { Board, Stroke } from "./board.ts";
+import { type Board, outline, type Stroke } from "./board.ts";
 
 export type Pen = { readonly color: string; readonly width: number };
 
 export function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke, pen: Pen): void {
-  const [first, ...rest] = stroke.points;
+  const [first, ...rest] = outline(stroke);
   if (!first) return;
   ctx.strokeStyle = pen.color;
   ctx.lineWidth = pen.width;

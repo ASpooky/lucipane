@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  beginBox,
   beginStroke,
   clearBoard,
   emptyBoard,
   endStroke,
   eraseAt,
   extendStroke,
+  outline,
 } from "../src/board.ts";
 
 const p = (x: number, y: number) => ({ x, y });
@@ -17,13 +19,13 @@ describe("board", () => {
 
   it("begins a stroke at the given point", () => {
     const b = beginStroke(emptyBoard(), p(1, 2));
-    expect(b.current).toEqual({ points: [p(1, 2)] });
+    expect(b.current).toEqual({ kind: "freehand", points: [p(1, 2)] });
     expect(b.strokes).toEqual([]);
   });
 
   it("extends the current stroke", () => {
     const b = extendStroke(beginStroke(emptyBoard(), p(1, 2)), p(3, 4));
-    expect(b.current).toEqual({ points: [p(1, 2), p(3, 4)] });
+    expect(b.current).toEqual({ kind: "freehand", points: [p(1, 2), p(3, 4)] });
   });
 
   it("ignores extend when no stroke is in progress", () => {
@@ -33,7 +35,10 @@ describe("board", () => {
 
   it("commits the current stroke on end", () => {
     const b = endStroke(extendStroke(beginStroke(emptyBoard(), p(1, 2)), p(3, 4)));
-    expect(b).toEqual({ strokes: [{ points: [p(1, 2), p(3, 4)] }], current: null });
+    expect(b).toEqual({
+      strokes: [{ kind: "freehand", points: [p(1, 2), p(3, 4)] }],
+      current: null,
+    });
   });
 
   it("ignores end when no stroke is in progress", () => {
@@ -45,12 +50,12 @@ describe("board", () => {
     const before = beginStroke(emptyBoard(), p(1, 2));
     extendStroke(before, p(3, 4));
     endStroke(before);
-    expect(before).toEqual({ strokes: [], current: { points: [p(1, 2)] } });
+    expect(before).toEqual({ strokes: [], current: { kind: "freehand", points: [p(1, 2)] } });
   });
 
   it("drops the in-progress stroke when a new one begins", () => {
     const b = beginStroke(beginStroke(emptyBoard(), p(1, 2)), p(5, 6));
-    expect(b).toEqual({ strokes: [], current: { points: [p(5, 6)] } });
+    expect(b).toEqual({ strokes: [], current: { kind: "freehand", points: [p(5, 6)] } });
   });
 });
 
@@ -62,7 +67,10 @@ describe("clearBoard", () => {
 });
 
 describe("eraseAt", () => {
-  const line = (...pts: [number, number][]) => ({ points: pts.map(([x, y]) => p(x, y)) });
+  const line = (...pts: [number, number][]) => ({
+    kind: "freehand" as const,
+    points: pts.map(([x, y]) => p(x, y)),
+  });
   const board = (...strokes: ReturnType<typeof line>[]) => ({ strokes, current: null });
 
   it("removes a stroke whose segment passes within the radius", () => {
@@ -94,5 +102,54 @@ describe("eraseAt", () => {
   it("leaves the stroke in progress alone", () => {
     const b = beginStroke(emptyBoard(), p(0, 0));
     expect(eraseAt(b, p(0, 0), 5)).toBe(b);
+  });
+});
+
+describe("box", () => {
+  it("begins a zero-size box at the given point", () => {
+    expect(beginBox(emptyBoard(), p(1, 2)).current).toEqual({
+      kind: "box",
+      from: p(1, 2),
+      to: p(1, 2),
+    });
+  });
+
+  it("moves the opposite corner on extend", () => {
+    const b = extendStroke(extendStroke(beginBox(emptyBoard(), p(1, 2)), p(5, 5)), p(9, 8));
+    expect(b.current).toEqual({ kind: "box", from: p(1, 2), to: p(9, 8) });
+  });
+
+  it("commits like any other stroke", () => {
+    const b = endStroke(extendStroke(beginBox(emptyBoard(), p(0, 0)), p(10, 10)));
+    expect(b).toEqual({
+      strokes: [{ kind: "box", from: p(0, 0), to: p(10, 10) }],
+      current: null,
+    });
+  });
+
+  it("is erased by touching an edge", () => {
+    const b = endStroke(extendStroke(beginBox(emptyBoard(), p(0, 0)), p(100, 100)));
+    expect(eraseAt(b, p(100, 50), 5).strokes).toEqual([]);
+  });
+
+  it("is not erased from its empty interior", () => {
+    const b = endStroke(extendStroke(beginBox(emptyBoard(), p(0, 0)), p(100, 100)));
+    expect(eraseAt(b, p(50, 50), 5)).toBe(b);
+  });
+});
+
+describe("outline", () => {
+  it("is the points of a freehand stroke", () => {
+    expect(outline({ kind: "freehand", points: [p(0, 0), p(1, 1)] })).toEqual([p(0, 0), p(1, 1)]);
+  });
+
+  it("is the closed rectangle of a box", () => {
+    expect(outline({ kind: "box", from: p(0, 0), to: p(4, 2) })).toEqual([
+      p(0, 0),
+      p(4, 0),
+      p(4, 2),
+      p(0, 2),
+      p(0, 0),
+    ]);
   });
 });

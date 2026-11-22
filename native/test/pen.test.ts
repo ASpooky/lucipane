@@ -11,6 +11,7 @@ describe("applyPenEvent", () => {
     expect(b).toEqual({
       strokes: [
         {
+          kind: "freehand",
           points: [
             { x: 1, y: 2 },
             { x: 3, y: 4 },
@@ -27,6 +28,12 @@ describe("applyPenEvent", () => {
       x: 5,
       y: 5,
     });
-    expect(b.current?.points).toHaveLength(2);
+    expect(b.current).toEqual({
+      kind: "freehand",
+      points: [
+        { x: 0, y: 0 },
+        { x: 5, y: 5 },
+      ],
+    });
   });
 });

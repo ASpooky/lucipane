@@ -1,7 +1,13 @@
 // Board state and its pure transitions. No DOM, no canvas: rendering lives in render.ts.
 
 export type Point = { readonly x: number; readonly y: number };
-export type Stroke = { readonly points: readonly Point[] };
+/** A hand-drawn line through `points`. */
+export type Freehand = { readonly kind: "freehand"; readonly points: readonly Point[] };
+/** An axis-aligned rectangle between two opposite corners. Kept as a box (not as points)
+ *  so consumers such as the LLM can tell "the user boxed this area". */
+export type Box = { readonly kind: "box"; readonly from: Point; readonly to: Point };
+export type Stroke = Freehand | Box;
+
 export type Board = {
   readonly strokes: readonly Stroke[];
   readonly current: Stroke | null;
@@ -11,14 +17,38 @@ export function emptyBoard(): Board {
   return { strokes: [], current: null };
 }
 
-/** Start a new stroke. An unfinished stroke in progress is discarded. */
+/** Start a freehand stroke. An unfinished stroke in progress is discarded. */
 export function beginStroke(board: Board, p: Point): Board {
-  return { ...board, current: { points: [p] } };
+  return { ...board, current: { kind: "freehand", points: [p] } };
 }
 
+/** Start a box with both corners at `p`. An unfinished stroke in progress is discarded. */
+export function beginBox(board: Board, p: Point): Board {
+  return { ...board, current: { kind: "box", from: p, to: p } };
+}
+
+/** Freehand: append `p`. Box: move the opposite corner to `p`. */
 export function extendStroke(board: Board, p: Point): Board {
-  if (!board.current) return board;
-  return { ...board, current: { points: [...board.current.points, p] } };
+  const current = board.current;
+  if (!current) return board;
+  switch (current.kind) {
+    case "freehand":
+      return { ...board, current: { ...current, points: [...current.points, p] } };
+    case "box":
+      return { ...board, current: { ...current, to: p } };
+  }
+}
+
+/** The polyline that draws a stroke. A box becomes its closed rectangle. */
+export function outline(stroke: Stroke): readonly Point[] {
+  switch (stroke.kind) {
+    case "freehand":
+      return stroke.points;
+    case "box": {
+      const { from: a, to: b } = stroke;
+      return [a, { x: b.x, y: a.y }, b, { x: a.x, y: b.y }, a];
+    }
+  }
 }
 
 export function endStroke(board: Board): Board {
@@ -42,7 +72,7 @@ export function eraseAt(board: Board, p: Point, radius: number): Board {
 }
 
 function strokeHits(stroke: Stroke, p: Point, radius: number): boolean {
-  const [first, ...rest] = stroke.points;
+  const [first, ...rest] = outline(stroke);
   if (!first) return false;
   if (rest.length === 0) return distance(p, first) <= radius;
   let prev = first;
