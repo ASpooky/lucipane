@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 /// Must match `CONTRACT_VERSION` in `contract/src/version.ts`.
-pub const CONTRACT_VERSION: u32 = 1;
+pub const CONTRACT_VERSION: u32 = 2;
 
 /// Must match `identifier` in tauri.conf.json.
 const APP_IDENTIFIER: &str = "dev.aspooky.lucipane";
@@ -18,11 +18,38 @@ pub struct Point {
     pub y: f64,
 }
 
+/// Who drew a stroke.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Author {
+    User,
+    Agent,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Stroke {
-    Freehand { points: Vec<Point> },
-    Box { from: Point, to: Point },
+    Freehand {
+        author: Author,
+        points: Vec<Point>,
+    },
+    Box {
+        author: Author,
+        from: Point,
+        to: Point,
+    },
+    /// The head is at `to`.
+    Arrow {
+        author: Author,
+        from: Point,
+        to: Point,
+    },
+    /// `at` is the top-left corner of the text.
+    Text {
+        author: Author,
+        at: Point,
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -86,12 +113,21 @@ mod tests {
     fn parses_the_shared_contract_fixture() {
         let snapshot = BoardSnapshot::parse(FIXTURE).unwrap();
         assert_eq!(snapshot.scale, 1.5);
-        assert_eq!(snapshot.strokes.len(), 2);
+        assert_eq!(snapshot.strokes.len(), 4);
         assert_eq!(
             snapshot.strokes[1],
             Stroke::Box {
+                author: Author::User,
                 from: Point { x: 30.0, y: 40.0 },
                 to: Point { x: 10.0, y: 0.0 }
+            }
+        );
+        assert_eq!(
+            snapshot.strokes[3],
+            Stroke::Text {
+                author: Author::Agent,
+                at: Point { x: 10.4, y: 20.2 },
+                text: "is this it?".into()
             }
         );
     }
@@ -111,7 +147,8 @@ mod tests {
 
     #[test]
     fn rejects_a_non_positive_scale() {
-        let json = r#"{"contractVersion":1,"scale":0,"strokes":[]}"#;
+        let json = format!(r#"{{"contractVersion":{CONTRACT_VERSION},"scale":0,"strokes":[]}}"#);
+        let json = json.as_str();
         assert!(BoardSnapshot::parse(json).is_err());
     }
 

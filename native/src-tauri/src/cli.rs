@@ -158,7 +158,7 @@ fn default_capture_path() -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::board::{Point, Stroke};
+    use crate::board::{Author, Point, Stroke};
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
@@ -204,6 +204,7 @@ mod tests {
             contract_version: CONTRACT_VERSION,
             scale: 2.0,
             strokes: vec![Stroke::Box {
+                author: Author::User,
                 from: Point { x: 0.0, y: 0.0 },
                 to: Point { x: 5.0, y: 5.0 },
             }],
@@ -221,6 +222,7 @@ mod tests {
         assert_eq!(
             output.annotations,
             vec![Annotation::Box {
+                author: Author::User,
                 x: 0,
                 y: 0,
                 width: 10,

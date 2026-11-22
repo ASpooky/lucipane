@@ -1,7 +1,7 @@
 // Overlay canvas.
 // - Middle-button drag anywhere draws via the Rust global mouse hook (a Channel).
 // - Draw mode (toggled by a global hotkey in Rust) makes the overlay take the mouse:
-//   left-drag draws, boxes or erases. Single keys: B box, E eraser, C clear, Esc exit.
+//   left-drag draws. Single keys: A arrow, B box, E eraser, C clear, Esc exit.
 // - Finished strokes are saved to the board file for the `lucipane capture` CLI, and
 //   `lucipane clear` arrives as a "clear" event.
 // - In a plain browser (http://localhost:1420) draw mode is always on, for quick testing.
@@ -10,6 +10,7 @@ import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   type Board,
+  beginArrow,
   beginBox,
   beginStroke,
   clearBoard,
@@ -21,11 +22,22 @@ import {
   toSnapshot,
 } from "./board.ts";
 import { applyPenEvent, type PenEvent } from "./pen.ts";
-import { type Pen, render } from "./render.ts";
+import { type Palette, render } from "./render.ts";
 
-type Tool = "pen" | "box" | "eraser";
+type Tool = "pen" | "box" | "arrow" | "eraser";
 
-const TOOL_LABELS: Record<Tool, string> = { pen: "Pen", box: "Box", eraser: "Eraser" };
+const TOOL_LABELS: Record<Tool, string> = {
+  pen: "Pen",
+  box: "Box",
+  arrow: "Arrow",
+  eraser: "Eraser",
+};
+
+const BEGIN: Record<Exclude<Tool, "eraser">, typeof beginStroke> = {
+  pen: beginStroke,
+  box: beginBox,
+  arrow: beginArrow,
+};
 
 const ERASER_RADIUS = 12;
 
@@ -40,7 +52,11 @@ function setupCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext
 const { canvas, ctx } = setupCanvas();
 const hudTool = document.querySelector<HTMLElement>("#hud-tool");
 
-const pen: Pen = { color: "rgba(255, 60, 60, 0.8)", width: 6 };
+// The user draws in red, the agent in blue.
+const palette: Palette = {
+  user: { color: "rgba(255, 60, 60, 0.85)", width: 6 },
+  agent: { color: "rgba(70, 160, 255, 0.9)", width: 5 },
+};
 
 // The single place board state lives. Only replace it through board.ts functions.
 let board: Board = emptyBoard();
@@ -53,7 +69,7 @@ function update(next: Board): void {
   if (next === board) return;
   const finishedChanged = next.strokes !== board.strokes;
   board = next;
-  render(ctx, board, pen);
+  render(ctx, board, palette);
   if (finishedChanged) saveBoard();
 }
 
@@ -86,7 +102,7 @@ function resize(): void {
   canvas.width = Math.round(window.innerWidth * dpr);
   canvas.height = Math.round(window.innerHeight * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  render(ctx, board, pen);
+  render(ctx, board, palette);
 }
 
 async function listenToRust(): Promise<void> {
@@ -115,7 +131,7 @@ function listenToPointer(): void {
       erasing = true;
       update(eraseAt(board, toPoint(e), ERASER_RADIUS));
     } else {
-      const begin = tool === "box" ? beginBox : beginStroke;
+      const begin = BEGIN[tool];
       update(begin(board, toPoint(e)));
     }
   });
@@ -139,6 +155,9 @@ function listenToKeys(): void {
     switch (e.key.toLowerCase()) {
       case "e":
         setTool(tool === "eraser" ? "pen" : "eraser");
+        break;
+      case "a":
+        setTool(tool === "arrow" ? "pen" : "arrow");
         break;
       case "b":
         setTool(tool === "box" ? "pen" : "box");

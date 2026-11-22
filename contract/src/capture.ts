@@ -3,18 +3,30 @@
  * An agent reads the image at `image.path` and relates `annotations` to it.
  */
 import { z } from "zod";
+import { Author } from "./board.ts";
 import { CONTRACT_VERSION } from "./version.ts";
 
 const Pixel = z.number().int();
 const Size = z.number().int().nonnegative();
+const PixelPoint = z.tuple([Pixel, Pixel]);
 
 /**
- * One thing the user drew, in pixels of the captured image (origin top-left).
- * Freehand points are rounded, with consecutive duplicates removed.
+ * One thing drawn on the overlay, in pixels of the captured image (origin top-left).
+ * Freehand points are rounded and simplified. `author` tells the user's marks from the
+ * agent's own.
  */
 export const Annotation = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("freehand"), points: z.array(z.tuple([Pixel, Pixel])) }),
-  z.object({ kind: z.literal("box"), x: Pixel, y: Pixel, width: Size, height: Size }),
+  z.object({ kind: z.literal("freehand"), author: Author, points: z.array(PixelPoint) }),
+  z.object({
+    kind: z.literal("box"),
+    author: Author,
+    x: Pixel,
+    y: Pixel,
+    width: Size,
+    height: Size,
+  }),
+  z.object({ kind: z.literal("arrow"), author: Author, from: PixelPoint, to: PixelPoint }),
+  z.object({ kind: z.literal("text"), author: Author, x: Pixel, y: Pixel, text: z.string() }),
 ]);
 export type Annotation = z.infer<typeof Annotation>;
 

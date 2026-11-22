@@ -1,9 +1,10 @@
 {
-  "contractVersion": 1,
+  "contractVersion": 2,
   "scale": 1.5,
   "strokes": [
     {
       "kind": "freehand",
+      "author": "user",
       "points": [
         { "x": 10, "y": 20 },
         { "x": 30.3, "y": 40.2 },
@@ -11,6 +12,13 @@
         { "x": 50, "y": 20 }
       ]
     },
-    { "kind": "box", "from": { "x": 30, "y": 40 }, "to": { "x": 10, "y": 0 } }
+    { "kind": "box", "author": "user", "from": { "x": 30, "y": 40 }, "to": { "x": 10, "y": 0 } },
+    {
+      "kind": "arrow",
+      "author": "agent",
+      "from": { "x": 100, "y": 100 },
+      "to": { "x": 120, "y": 80 }
+    },
+    { "kind": "text", "author": "agent", "at": { "x": 10.4, "y": 20.2 }, "text": "is this it?" }
   ]
 }

@@ -1,5 +1,5 @@
 {
-  "contractVersion": 1,
+  "contractVersion": 2,
   "image": {
     "path": "C:\\Users\\me\\AppData\\Local\\Temp\\lucipane\\capture.png",
     "width": 2880,
@@ -8,8 +8,11 @@
   "annotations": [
     {
       "kind": "freehand",
+      "author": "user",
       "points": [[15, 30], [45, 60], [75, 30]]
     },
-    { "kind": "box", "x": 15, "y": 0, "width": 30, "height": 60 }
+    { "kind": "box", "author": "user", "x": 15, "y": 0, "width": 30, "height": 60 },
+    { "kind": "arrow", "author": "agent", "from": [150, 150], "to": [180, 120] },
+    { "kind": "text", "author": "agent", "x": 16, "y": 30, "text": "is this it?" }
   ]
 }
