@@ -19,9 +19,13 @@ pub enum Annotation {
     },
 }
 
-/// Scale every stroke to image pixels. Freehand points are rounded and consecutive
-/// duplicates dropped (they carry no information and cost tokens). Boxes are normalized
-/// to a top-left corner and a non-negative size.
+/// How far (in image pixels) a simplified freehand line may stray from what was drawn.
+/// Small enough to keep the shape of handwriting, large enough to drop mouse jitter.
+const SIMPLIFY_TOLERANCE_PX: f64 = 1.5;
+
+/// Scale every stroke to image pixels. Freehand points are rounded, consecutive duplicates
+/// dropped and the line simplified: dense mouse samples carry no extra meaning for an agent
+/// and cost tokens. Boxes are normalized to a top-left corner and a non-negative size.
 pub fn to_annotations(snapshot: &BoardSnapshot) -> Vec<Annotation> {
     let px = |p: &Point| -> [i64; 2] {
         [
@@ -36,7 +40,9 @@ pub fn to_annotations(snapshot: &BoardSnapshot) -> Vec<Annotation> {
             Stroke::Freehand { points } => {
                 let mut scaled: Vec<[i64; 2]> = points.iter().map(px).collect();
                 scaled.dedup();
-                Annotation::Freehand { points: scaled }
+                Annotation::Freehand {
+                    points: simplify(&scaled, SIMPLIFY_TOLERANCE_PX),
+                }
             }
             Stroke::Box { from, to } => {
                 let [x1, y1] = px(from);
@@ -50,6 +56,94 @@ pub fn to_annotations(snapshot: &BoardSnapshot) -> Vec<Annotation> {
             }
         })
         .collect()
+}
+
+/// Drop points that lie within `tolerance` pixels of the line through their neighbours
+/// (Ramer–Douglas–Peucker). The first and last points are always kept.
+pub fn simplify(points: &[[i64; 2]], tolerance: f64) -> Vec<[i64; 2]> {
+    if points.len() <= 2 {
+        return points.to_vec();
+    }
+    let mut keep = vec![false; points.len()];
+    keep[0] = true;
+    keep[points.len() - 1] = true;
+    // Iterative to avoid deep recursion on long strokes.
+    let mut spans = vec![(0, points.len() - 1)];
+    while let Some((start, end)) = spans.pop() {
+        let farthest = (start + 1..end)
+            .map(|i| {
+                (
+                    i,
+                    distance_to_segment(points[i], points[start], points[end]),
+                )
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((i, distance)) = farthest
+            && distance > tolerance
+        {
+            keep[i] = true;
+            spans.push((start, i));
+            spans.push((i, end));
+        }
+    }
+    points
+        .iter()
+        .zip(keep)
+        .filter_map(|(p, k)| k.then_some(*p))
+        .collect()
+}
+
+/// Distance from `p` to the segment a–b. For a closed stroke (a == b) this is the
+/// distance to that point, so loops keep their shape.
+fn distance_to_segment(p: [i64; 2], a: [i64; 2], b: [i64; 2]) -> f64 {
+    let [px, py] = p.map(|v| v as f64);
+    let [ax, ay] = a.map(|v| v as f64);
+    let [bx, by] = b.map(|v| v as f64);
+    let (dx, dy) = (bx - ax, by - ay);
+    let length_sq = dx * dx + dy * dy;
+    let t = if length_sq == 0.0 {
+        0.0
+    } else {
+        (((px - ax) * dx + (py - ay) * dy) / length_sq).clamp(0.0, 1.0)
+    };
+    (px - (ax + t * dx)).hypot(py - (ay + t * dy))
+}
+
+#[cfg(test)]
+mod simplify_tests {
+    use super::simplify;
+
+    #[test]
+    fn keeps_short_lines_as_they_are() {
+        assert_eq!(simplify(&[], 2.0), Vec::<[i64; 2]>::new());
+        assert_eq!(simplify(&[[1, 1]], 2.0), vec![[1, 1]]);
+        assert_eq!(simplify(&[[0, 0], [9, 9]], 2.0), vec![[0, 0], [9, 9]]);
+    }
+
+    #[test]
+    fn collapses_a_straight_run_to_its_ends() {
+        let line: Vec<[i64; 2]> = (0..=10).map(|i| [i * 10, i * 5]).collect();
+        assert_eq!(simplify(&line, 2.0), vec![[0, 0], [100, 50]]);
+    }
+
+    #[test]
+    fn drops_jitter_within_the_tolerance() {
+        let wobbly = [[0, 0], [10, 1], [20, -1], [30, 1], [40, 0]];
+        assert_eq!(simplify(&wobbly, 2.0), vec![[0, 0], [40, 0]]);
+    }
+
+    #[test]
+    fn keeps_corners() {
+        let corner = [[0, 0], [5, 0], [10, 0], [10, 5], [10, 10]];
+        assert_eq!(simplify(&corner, 2.0), vec![[0, 0], [10, 0], [10, 10]]);
+    }
+
+    #[test]
+    fn keeps_a_closed_loop_open_at_its_start() {
+        // A circle-ish loop that ends where it started must not collapse to one point.
+        let lp = [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]];
+        assert_eq!(simplify(&lp, 2.0), lp.to_vec());
+    }
 }
 
 #[cfg(test)]
