@@ -28,3 +28,28 @@ pnpm lint          # biome
 pnpm dev:daemon
 pnpm dev:native    # tauri dev
 ```
+
+## Tiling window managers
+
+lucipane shows a full-screen transparent overlay. Tiling window managers must leave it alone,
+or they will tile it like a normal window.
+
+**GlazeWM** (Windows) — `~/.glzr/glazewm/config.yaml`:
+
+```yaml
+window_rules:
+  - commands: ["ignore"]
+    match:
+      - window_process: { equals: "lucipane" }
+```
+
+**AeroSpace** (macOS) — `~/.aerospace.toml`:
+
+```toml
+[[on-window-detected]]
+if.app-id = 'dev.aspooky.lucipane'
+run = 'layout floating'
+```
+
+Note: AeroSpace hides windows of inactive workspaces by moving them off-screen, so the overlay
+may follow a single workspace. This is not verified yet.
