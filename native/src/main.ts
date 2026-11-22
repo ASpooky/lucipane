@@ -1,8 +1,9 @@
 // Spike ②: draw strokes on the overlay canvas.
-// Input is browser pointer events for now (open http://localhost:1420 to try it, since the
-// overlay itself is click-through). The Rust global mouse hook will call the same
-// begin/extend/end entry points later.
+// In Tauri, input comes from the Rust global mouse hook (middle-button drag) via a Channel.
+// In a plain browser (http://localhost:1420), pointer events stand in so the page can be tried
+// without the overlay, which is click-through.
 
+import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import {
   type Board,
   beginStroke,
@@ -11,6 +12,7 @@ import {
   extendStroke,
   type Point,
 } from "./board.ts";
+import { applyPenEvent, type PenEvent } from "./pen.ts";
 import { type Pen, render } from "./render.ts";
 
 function setupCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
@@ -43,15 +45,28 @@ function resize(): void {
   render(ctx, board, pen);
 }
 
-const toPoint = (e: PointerEvent): Point => ({ x: e.clientX, y: e.clientY });
+async function listenToMouseHook(): Promise<void> {
+  const channel = new Channel<PenEvent>();
+  channel.onmessage = (ev) => update(applyPenEvent(board, ev));
+  await invoke("subscribe_pen", { onEvent: channel });
+}
 
-canvas.addEventListener("pointerdown", (e) => {
-  canvas.setPointerCapture(e.pointerId);
-  update(beginStroke(board, toPoint(e)));
-});
-canvas.addEventListener("pointermove", (e) => update(extendStroke(board, toPoint(e))));
-canvas.addEventListener("pointerup", () => update(endStroke(board)));
-canvas.addEventListener("pointercancel", () => update(endStroke(board)));
+function listenToPointer(): void {
+  const toPoint = (e: PointerEvent): Point => ({ x: e.clientX, y: e.clientY });
+  canvas.addEventListener("pointerdown", (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    update(beginStroke(board, toPoint(e)));
+  });
+  canvas.addEventListener("pointermove", (e) => update(extendStroke(board, toPoint(e))));
+  canvas.addEventListener("pointerup", () => update(endStroke(board)));
+  canvas.addEventListener("pointercancel", () => update(endStroke(board)));
+}
 
 window.addEventListener("resize", resize);
 resize();
+
+if (isTauri()) {
+  void listenToMouseHook();
+} else {
+  listenToPointer();
+}
