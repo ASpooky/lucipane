@@ -1,6 +1,6 @@
 ---
 name: lucipane
-description: See what the user drew on their screen with the lucipane overlay (circles, arrows, boxes, handwriting), together with the screen behind it. Use when the user points at something on screen ("this", "here", "the part I marked", "look at my screen") or asks you to clear their drawings.
+description: See what the user drew on their screen with the lucipane overlay (circles, arrows, boxes, handwriting), together with the screen behind it, and point back by drawing boxes, arrows and labels yourself. Use when the user points at something on screen ("this", "here", "the part I marked", "look at my screen"), when showing them where something is on screen helps your answer, or when they ask to clear the drawings.
 ---
 
 # lucipane
@@ -53,13 +53,34 @@ the request is about what is on the user's screen.
 
 `--out <file.png>` writes the image to a chosen path instead of a temporary file.
 
+## Point back at the screen
+
+You can draw on the overlay too, in blue, to answer by pointing: "is this the button you
+mean?", "the setting is here", numbered boxes for review comments.
+
+```sh
+lucipane draw box   --x 640 --y 300 --w 420 --h 180
+lucipane draw arrow --from 200,820 --to 600,480      # head at --to
+lucipane draw text  --x 650 --y 270 --text "1"
+```
+
+Coordinates are pixels of the latest `lucipane capture` image, so capture first and place
+marks from what you see in it.
+
+- Draw only as part of answering the user, about the screen they asked about. Capture right
+  before drawing: the screen may have changed (another app, a game) since the last capture.
+- Keep it to a few marks and pair them with your reply ("box 1: …").
+- Remove your own marks once they have served their purpose, or before drawing a new set:
+  `lucipane clear --agent` (the user's marks stay).
+
 ## Clear the marks
 
 ```sh
-lucipane clear
+lucipane clear           # everything
+lucipane clear --agent   # only your marks
 ```
 
-Erases every mark on the overlay. Run it only when the user asks for it.
+Clear the user's marks only when the user asks for it.
 
 ## When something is off
 

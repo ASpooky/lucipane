@@ -153,3 +153,15 @@ function distanceToSegment(p: Point, a: Point, b: Point): number {
 export function toSnapshot(board: Board, scale: number): BoardSnapshot {
   return { contractVersion: CONTRACT_VERSION, scale, strokes: board.strokes };
 }
+
+/** Add a finished stroke (e.g. one an agent drew), leaving any stroke in progress alone. */
+export function addStroke(board: Board, stroke: Stroke): Board {
+  return { ...board, strokes: [...board.strokes, stroke] };
+}
+
+/** Remove every finished stroke drawn by `author`. Returns the same board if none. */
+export function clearAuthor(board: Board, author: Author): Board {
+  const kept = board.strokes.filter((s) => s.author !== author);
+  if (kept.length === board.strokes.length) return board;
+  return { ...board, strokes: kept };
+}

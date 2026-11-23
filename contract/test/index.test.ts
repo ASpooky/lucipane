@@ -5,6 +5,7 @@ import {
   Board,
   BoardSnapshot,
   CaptureOutput,
+  ClearEvent,
   CONTRACT_VERSION,
   Stroke,
 } from "../src/index.ts";
@@ -87,5 +88,12 @@ describe("CaptureOutput (CLI stdout -> agent)", () => {
   it("carries the author of each annotation", () => {
     const arrow = { kind: "arrow", author: "agent", from: [0, 0], to: [10, 10] };
     expect(Annotation.parse(arrow)).toEqual(arrow);
+  });
+});
+
+describe("ClearEvent (Rust -> overlay WebView)", () => {
+  it("says whether to clear only the agent's strokes", () => {
+    expect(ClearEvent.parse({ agentOnly: true })).toEqual({ agentOnly: true });
+    expect(ClearEvent.safeParse({}).success).toBe(false);
   });
 });

@@ -1,49 +1,154 @@
 //! `lucipane <command>`: the same executable doubles as a CLI for agents.
 //!
-//!   lucipane capture [--out <file.png>]   screenshot + annotations as JSON on stdout
-//!   lucipane clear                        erase the overlay (forwarded to the running app)
-//!
 //! `capture` runs entirely in this process: the overlay's strokes are on screen, so they are
 //! in the screenshot, and their geometry comes from the board file the running app keeps
-//! up to date. `clear` must reach the running app; it is forwarded by the single-instance
-//! plugin (see lib.rs).
+//! up to date. `clear` and `draw` must reach the running app; they are forwarded by the
+//! single-instance plugin (see lib.rs).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
 use crate::annotate::{Annotation, to_annotations};
 use crate::board::{BoardSnapshot, CONTRACT_VERSION, board_file};
+use crate::shape::{MAX_TEXT_CHARS, Shape};
 
 pub const USAGE: &str = "\
 usage:
   lucipane                              start the overlay
-  lucipane capture [--out <file.png>]   capture the primary display and the user's annotations
-  lucipane clear                        erase all annotations in the running overlay";
+  lucipane capture [--out <file.png>]   capture the primary display and all annotations
+  lucipane clear [--agent]              erase all annotations (or only the agent's)
+  lucipane draw box --x X --y Y --w W --h H
+  lucipane draw arrow --from X,Y --to X,Y
+  lucipane draw text --x X --y Y --text TEXT
+                                        draw as the agent, in pixels of the capture image";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Capture { out: Option<PathBuf> },
-    Clear,
+    Clear { agent_only: bool },
+    Draw(Shape),
     Help,
+}
+
+impl Command {
+    /// Commands that act on the running overlay and must be forwarded to it.
+    pub fn is_forwarded(&self) -> bool {
+        matches!(self, Command::Clear { .. } | Command::Draw(_))
+    }
 }
 
 /// Parse the arguments after the program name. `Ok(None)` means: start the overlay app.
 pub fn parse(args: &[String]) -> Result<Option<Command>, String> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    match args.as_slice() {
-        [] => Ok(None),
-        ["capture"] => Ok(Some(Command::Capture { out: None })),
-        ["capture", "--out", path] => Ok(Some(Command::Capture {
+    let command = match args.as_slice() {
+        [] => return Ok(None),
+        ["capture"] => Command::Capture { out: None },
+        ["capture", "--out", path] => Command::Capture {
             out: Some(PathBuf::from(path)),
-        })),
-        ["clear"] => Ok(Some(Command::Clear)),
-        ["help" | "--help" | "-h"] => Ok(Some(Command::Help)),
-        _ => Err(format!(
-            "unrecognized arguments: {}\n{USAGE}",
-            args.join(" ")
-        )),
+        },
+        ["clear"] => Command::Clear { agent_only: false },
+        ["clear", "--agent"] => Command::Clear { agent_only: true },
+        ["draw", kind, rest @ ..] => Command::Draw(parse_shape(kind, rest)?),
+        ["help" | "--help" | "-h"] => Command::Help,
+        _ => return Err(unrecognized(&args)),
+    };
+    Ok(Some(command))
+}
+
+fn parse_shape(kind: &str, rest: &[&str]) -> Result<Shape, String> {
+    let shape = match kind {
+        "box" => {
+            let f = flags(rest, &["--x", "--y", "--w", "--h"])?;
+            let (width, height) = (number(&f, "--w")?, number(&f, "--h")?);
+            if width < 0.0 || height < 0.0 {
+                return Err("--w and --h must not be negative".into());
+            }
+            Shape::Box {
+                x: number(&f, "--x")?,
+                y: number(&f, "--y")?,
+                width,
+                height,
+            }
+        }
+        "arrow" => {
+            let f = flags(rest, &["--from", "--to"])?;
+            Shape::Arrow {
+                from: pair(&f, "--from")?,
+                to: pair(&f, "--to")?,
+            }
+        }
+        "text" => {
+            let f = flags(rest, &["--x", "--y", "--text"])?;
+            let text = f["--text"].to_string();
+            let chars = text.chars().count();
+            if chars == 0 || chars > MAX_TEXT_CHARS {
+                return Err(format!("--text must be 1 to {MAX_TEXT_CHARS} characters"));
+            }
+            Shape::Text {
+                x: number(&f, "--x")?,
+                y: number(&f, "--y")?,
+                text,
+            }
+        }
+        _ => {
+            return Err(format!(
+                "unknown shape `{kind}` (box, arrow or text)\n{USAGE}"
+            ));
+        }
+    };
+    Ok(shape)
+}
+
+/// Parse `--name value` pairs. Every flag in `required` must appear exactly once, and no
+/// other flag is accepted.
+fn flags<'a>(rest: &[&'a str], required: &[&str]) -> Result<HashMap<&'a str, &'a str>, String> {
+    if !rest.len().is_multiple_of(2) {
+        return Err(format!(
+            "expected `--flag value` pairs, got: {}",
+            rest.join(" ")
+        ));
     }
+    let mut found = HashMap::new();
+    for pair in rest.chunks(2) {
+        let (name, value) = (pair[0], pair[1]);
+        if !required.contains(&name) {
+            return Err(format!(
+                "unknown flag {name} (expected {})",
+                required.join(", ")
+            ));
+        }
+        if found.insert(name, value).is_some() {
+            return Err(format!("{name} given more than once"));
+        }
+    }
+    if let Some(missing) = required.iter().find(|name| !found.contains_key(*name)) {
+        return Err(format!("missing {missing}"));
+    }
+    Ok(found)
+}
+
+fn number(flags: &HashMap<&str, &str>, name: &str) -> Result<f64, String> {
+    parse_number(flags[name]).ok_or_else(|| format!("{name} must be a number"))
+}
+
+/// `X,Y`
+fn pair(flags: &HashMap<&str, &str>, name: &str) -> Result<[f64; 2], String> {
+    let invalid = || format!("{name} must be X,Y");
+    let (x, y) = flags[name].split_once(',').ok_or_else(invalid)?;
+    Ok([
+        parse_number(x).ok_or_else(invalid)?,
+        parse_number(y).ok_or_else(invalid)?,
+    ])
+}
+
+fn parse_number(s: &str) -> Option<f64> {
+    s.trim().parse::<f64>().ok().filter(|n| n.is_finite())
+}
+
+fn unrecognized(args: &[&str]) -> String {
+    format!("unrecognized arguments: {}\n{USAGE}", args.join(" "))
 }
 
 /// Contract: `CaptureOutput` in `contract/src/capture.ts`.
@@ -102,8 +207,8 @@ pub fn run(command: Command) -> i32 {
             }
         },
         // Reaching here means no overlay was running to forward the command to.
-        Command::Clear => {
-            eprintln!("lucipane clear: the overlay is not running");
+        Command::Clear { .. } | Command::Draw(_) => {
+            eprintln!("lucipane: the overlay is not running");
             1
         }
     }
@@ -185,7 +290,14 @@ mod tests {
 
     #[test]
     fn parses_clear_and_help() {
-        assert_eq!(parse(&args(&["clear"])), Ok(Some(Command::Clear)));
+        assert_eq!(
+            parse(&args(&["clear"])),
+            Ok(Some(Command::Clear { agent_only: false }))
+        );
+        assert_eq!(
+            parse(&args(&["clear", "--agent"])),
+            Ok(Some(Command::Clear { agent_only: true }))
+        );
         assert_eq!(parse(&args(&["help"])), Ok(Some(Command::Help)));
         assert_eq!(parse(&args(&["--help"])), Ok(Some(Command::Help)));
     }
@@ -196,6 +308,106 @@ mod tests {
         assert!(parse(&args(&["capture", "--verbose"])).is_err());
         assert!(parse(&args(&["capture", "--out"])).is_err());
         assert!(parse(&args(&["clear", "now"])).is_err());
+    }
+
+    #[test]
+    fn parses_draw_box() {
+        assert_eq!(
+            parse(&args(&[
+                "draw", "box", "--x", "10", "--y", "20.5", "--w", "30", "--h", "40"
+            ])),
+            Ok(Some(Command::Draw(Shape::Box {
+                x: 10.0,
+                y: 20.5,
+                width: 30.0,
+                height: 40.0
+            })))
+        );
+    }
+
+    #[test]
+    fn parses_draw_arrow_in_any_flag_order() {
+        assert_eq!(
+            parse(&args(&[
+                "draw", "arrow", "--to", "30,40", "--from", "10,20"
+            ])),
+            Ok(Some(Command::Draw(Shape::Arrow {
+                from: [10.0, 20.0],
+                to: [30.0, 40.0]
+            })))
+        );
+    }
+
+    #[test]
+    fn parses_draw_text() {
+        assert_eq!(
+            parse(&args(&[
+                "draw",
+                "text",
+                "--x",
+                "5",
+                "--y",
+                "6",
+                "--text",
+                "is this it?"
+            ])),
+            Ok(Some(Command::Draw(Shape::Text {
+                x: 5.0,
+                y: 6.0,
+                text: "is this it?".into()
+            })))
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_draw_arguments() {
+        let bad: &[&[&str]] = &[
+            &["draw", "circle", "--x", "1"],
+            &["draw", "box", "--x", "1", "--y", "2", "--w", "3"],
+            &[
+                "draw", "box", "--x", "1", "--y", "2", "--w", "-3", "--h", "4",
+            ],
+            &[
+                "draw", "box", "--x", "a", "--y", "2", "--w", "3", "--h", "4",
+            ],
+            &[
+                "draw", "box", "--x", "1", "--x", "1", "--y", "2", "--w", "3", "--h", "4",
+            ],
+            &[
+                "draw", "box", "--x", "1", "--y", "2", "--w", "3", "--h", "4", "--z", "5",
+            ],
+            &["draw", "arrow", "--from", "1", "--to", "2,3"],
+            &["draw", "arrow", "--from", "1,2"],
+            &["draw", "text", "--x", "1", "--y", "2", "--text", ""],
+            &[
+                "draw", "box", "--x", "1", "--y", "2", "--w", "NaN", "--h", "4",
+            ],
+        ];
+        for case in bad {
+            assert!(parse(&args(case)).is_err(), "should reject {case:?}");
+        }
+        let long = "x".repeat(MAX_TEXT_CHARS + 1);
+        assert!(
+            parse(&args(&[
+                "draw", "text", "--x", "1", "--y", "2", "--text", &long
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn forwards_only_commands_for_the_running_overlay() {
+        assert!(Command::Clear { agent_only: false }.is_forwarded());
+        assert!(
+            Command::Draw(Shape::Text {
+                x: 0.0,
+                y: 0.0,
+                text: "a".into()
+            })
+            .is_forwarded()
+        );
+        assert!(!Command::Capture { out: None }.is_forwarded());
+        assert!(!Command::Help.is_forwarded());
     }
 
     #[test]
