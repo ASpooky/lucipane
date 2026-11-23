@@ -14,7 +14,7 @@ use serde::Serialize;
 
 use crate::annotate::{Annotation, to_annotations};
 use crate::board::{BoardSnapshot, CONTRACT_VERSION, board_file};
-use crate::shape::{MAX_TEXT_CHARS, Shape};
+use crate::shape::{MAX_TEXT_CHARS, Shape, parse_svg_path};
 
 pub const USAGE: &str = "\
 usage:
@@ -24,6 +24,7 @@ usage:
   lucipane draw box --x X --y Y --w W --h H
   lucipane draw arrow --from X,Y --to X,Y
   lucipane draw text --x X --y Y --text TEXT
+  lucipane draw path --d PATH_DATA      SVG path data, e.g. \"M 10 10 C 20 0, 40 0, 50 10 Z\"
                                         draw as the agent, in pixels of the capture image
   lucipane wait [--out <file.png>]      block until the user leaves draw mode after drawing,
                                         then print the same output as capture";
@@ -108,9 +109,15 @@ fn parse_shape(kind: &str, rest: &[&str]) -> Result<Shape, String> {
                 text,
             }
         }
+        "path" => {
+            let f = flags(rest, &["--d"])?;
+            Shape::Path {
+                subpaths: parse_svg_path(f["--d"])?,
+            }
+        }
         _ => {
             return Err(format!(
-                "unknown shape `{kind}` (box, arrow or text)\n{USAGE}"
+                "unknown shape `{kind}` (box, arrow, text or path)\n{USAGE}"
             ));
         }
     };
@@ -355,6 +362,18 @@ mod tests {
         );
         assert_eq!(parse(&args(&["help"])), Ok(Some(Command::Help)));
         assert_eq!(parse(&args(&["--help"])), Ok(Some(Command::Help)));
+    }
+
+    #[test]
+    fn parses_a_path_drawing() {
+        assert_eq!(
+            parse(&args(&["draw", "path", "--d", "M 0 0 L 10 0 M 5 5 L 5 9"])),
+            Ok(Some(Command::Draw(Shape::Path {
+                subpaths: vec![vec![[0.0, 0.0], [10.0, 0.0]], vec![[5.0, 5.0], [5.0, 9.0]]]
+            })))
+        );
+        assert!(parse(&args(&["draw", "path", "--d", "nonsense"])).is_err());
+        assert!(parse(&args(&["draw", "path"])).is_err());
     }
 
     #[test]
