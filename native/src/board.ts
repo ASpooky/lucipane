@@ -1,17 +1,15 @@
-// Board state and its pure transitions. No DOM, no canvas: rendering lives in render.ts.
+// Board state transitions. Pure: no DOM, no canvas (rendering lives in render.ts).
+// The types come from the contract, the same documents the CLI reads from the board file.
 
-export type Point = { readonly x: number; readonly y: number };
-/** A hand-drawn line through `points`. */
-export type Freehand = { readonly kind: "freehand"; readonly points: readonly Point[] };
-/** An axis-aligned rectangle between two opposite corners. Kept as a box (not as points)
- *  so consumers such as the LLM can tell "the user boxed this area". */
-export type Box = { readonly kind: "box"; readonly from: Point; readonly to: Point };
-export type Stroke = Freehand | Box;
+import {
+  type Board,
+  type BoardSnapshot,
+  CONTRACT_VERSION,
+  type Point,
+  type Stroke,
+} from "@lucipane/contract";
 
-export type Board = {
-  readonly strokes: readonly Stroke[];
-  readonly current: Stroke | null;
-};
+export type { Board, Point, Stroke };
 
 export function emptyBoard(): Board {
   return { strokes: [], current: null };
@@ -95,4 +93,12 @@ function distanceToSegment(p: Point, a: Point, b: Point): number {
   if (lengthSq === 0) return distance(p, a);
   const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSq));
   return distance(p, { x: a.x + t * dx, y: a.y + t * dy });
+}
+
+/**
+ * The document written to the board file for the `lucipane capture` CLI.
+ * `scale` is physical pixels per CSS pixel (window.devicePixelRatio).
+ */
+export function toSnapshot(board: Board, scale: number): BoardSnapshot {
+  return { contractVersion: CONTRACT_VERSION, scale, strokes: board.strokes };
 }

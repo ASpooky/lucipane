@@ -1,8 +1,12 @@
+mod annotate;
+mod board;
+pub mod cli;
 mod focus;
 mod pen;
 
 use std::sync::Mutex;
 
+use board::BoardSnapshot;
 use pen::{Input, PenEvent, PenState, Viewport};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow, ipc::Channel};
 
@@ -79,6 +83,50 @@ fn subscribe_pen(sink: State<'_, PenSink>, on_event: Channel<PenEvent>) {
 #[tauri::command]
 fn set_draw_mode(app: AppHandle, enabled: bool) -> Result<(), String> {
     apply_draw_mode(&app, enabled).map_err(|e| e.to_string())
+}
+
+/// Persist the finished strokes for the `lucipane capture` CLI.
+#[tauri::command]
+fn save_board(snapshot: BoardSnapshot) -> Result<(), String> {
+    if snapshot.contract_version != board::CONTRACT_VERSION {
+        return Err(format!(
+            "unexpected contract version {}",
+            snapshot.contract_version
+        ));
+    }
+    write_board(&snapshot)
+}
+
+fn write_board(snapshot: &BoardSnapshot) -> Result<(), String> {
+    let path = board::board_file().ok_or("no data directory on this system")?;
+    let json = serde_json::to_string(snapshot).map_err(|e| e.to_string())?;
+    board::write_atomically(&path, &json).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// The overlay starts empty, so the board file must too: a file left over from an earlier
+/// run would otherwise report strokes that are no longer on screen.
+fn reset_board(scale: f64) {
+    if let Err(e) = write_board(&BoardSnapshot::empty(scale)) {
+        eprintln!("could not reset the board file: {e}");
+    }
+}
+
+fn remove_board() {
+    if let Some(path) = board::board_file() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Another `lucipane ...` was started while this overlay is running; the single-instance
+/// plugin hands us its arguments and exits it.
+fn on_second_instance(app: &AppHandle, argv: &[String]) {
+    // argv[0] is the program path. Only `clear` is forwarded: capture and help run in the
+    // other process and never get here, and a plain second launch has nothing to do.
+    if let Ok(Some(cli::Command::Clear)) = cli::parse(argv.get(1..).unwrap_or_default())
+        && let Err(e) = app.emit("clear", ())
+    {
+        eprintln!("failed to forward clear: {e}");
+    }
 }
 
 /// Cover the primary monitor with the overlay window, make it click-through, then show it.
@@ -162,21 +210,44 @@ fn spawn_mouse_hook(app: AppHandle, viewport: Viewport) {
     });
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    tauri::Builder::default()
+/// Start the overlay. With `forwarded = Some(..)`, this launch only exists to hand a command
+/// to an overlay that is already running; if there is none, report that and exit.
+pub fn run(forwarded: Option<cli::Command>) {
+    let mut builder = tauri::Builder::default();
+    // Must be the first plugin: a second instance exits inside it, before anything else runs.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            on_second_instance(app, &argv)
+        }));
+    }
+    builder
         .plugin(tauri_plugin_opener::init())
         .manage(PenSink::default())
         .manage(DrawMode::default())
-        .invoke_handler(tauri::generate_handler![subscribe_pen, set_draw_mode])
-        .setup(|app| {
+        .invoke_handler(tauri::generate_handler![
+            subscribe_pen,
+            set_draw_mode,
+            save_board
+        ])
+        .setup(move |app| {
+            if let Some(command) = forwarded {
+                // We are the only instance, so there was nobody to forward to.
+                std::process::exit(cli::run(command));
+            }
             let handle = app.handle();
             let viewport = show_overlay(handle)?;
+            reset_board(viewport.scale);
             #[cfg(desktop)]
             register_draw_mode_hotkey(handle)?;
             spawn_mouse_hook(handle.clone(), viewport);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                remove_board();
+            }
+        });
 }

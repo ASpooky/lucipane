@@ -1,3 +1,4 @@
+import { BoardSnapshot, CONTRACT_VERSION } from "@lucipane/contract";
 import { describe, expect, it } from "vitest";
 import {
   beginBox,
@@ -8,6 +9,7 @@ import {
   eraseAt,
   extendStroke,
   outline,
+  toSnapshot,
 } from "../src/board.ts";
 
 const p = (x: number, y: number) => ({ x, y });
@@ -151,5 +153,22 @@ describe("outline", () => {
       p(0, 2),
       p(0, 0),
     ]);
+  });
+});
+
+describe("toSnapshot", () => {
+  it("keeps finished strokes only and records the scale and contract version", () => {
+    const finished = endStroke(beginStroke(emptyBoard(), p(1, 1)));
+    const b = beginStroke(finished, p(9, 9));
+    expect(toSnapshot(b, 1.25)).toEqual({
+      contractVersion: CONTRACT_VERSION,
+      scale: 1.25,
+      strokes: finished.strokes,
+    });
+  });
+
+  it("produces a document the contract accepts", () => {
+    const b = endStroke(beginBox(emptyBoard(), p(0, 0)));
+    expect(BoardSnapshot.safeParse(toSnapshot(b, 2)).success).toBe(true);
   });
 });
