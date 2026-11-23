@@ -1,6 +1,7 @@
 import { BoardSnapshot, CONTRACT_VERSION } from "@lucipane/contract";
 import { describe, expect, it } from "vitest";
 import {
+  beginArrow,
   beginBox,
   beginStroke,
   clearBoard,
@@ -9,6 +10,9 @@ import {
   eraseAt,
   extendStroke,
   outline,
+  TEXT_LINE_HEIGHT,
+  TEXT_SIZE,
+  textBounds,
   toSnapshot,
 } from "../src/board.ts";
 
@@ -21,13 +25,13 @@ describe("board", () => {
 
   it("begins a stroke at the given point", () => {
     const b = beginStroke(emptyBoard(), p(1, 2));
-    expect(b.current).toEqual({ kind: "freehand", points: [p(1, 2)] });
+    expect(b.current).toEqual({ kind: "freehand", author: "user", points: [p(1, 2)] });
     expect(b.strokes).toEqual([]);
   });
 
   it("extends the current stroke", () => {
     const b = extendStroke(beginStroke(emptyBoard(), p(1, 2)), p(3, 4));
-    expect(b.current).toEqual({ kind: "freehand", points: [p(1, 2), p(3, 4)] });
+    expect(b.current).toEqual({ kind: "freehand", author: "user", points: [p(1, 2), p(3, 4)] });
   });
 
   it("ignores extend when no stroke is in progress", () => {
@@ -38,7 +42,7 @@ describe("board", () => {
   it("commits the current stroke on end", () => {
     const b = endStroke(extendStroke(beginStroke(emptyBoard(), p(1, 2)), p(3, 4)));
     expect(b).toEqual({
-      strokes: [{ kind: "freehand", points: [p(1, 2), p(3, 4)] }],
+      strokes: [{ kind: "freehand", author: "user", points: [p(1, 2), p(3, 4)] }],
       current: null,
     });
   });
@@ -52,12 +56,18 @@ describe("board", () => {
     const before = beginStroke(emptyBoard(), p(1, 2));
     extendStroke(before, p(3, 4));
     endStroke(before);
-    expect(before).toEqual({ strokes: [], current: { kind: "freehand", points: [p(1, 2)] } });
+    expect(before).toEqual({
+      strokes: [],
+      current: { kind: "freehand", author: "user", points: [p(1, 2)] },
+    });
   });
 
   it("drops the in-progress stroke when a new one begins", () => {
     const b = beginStroke(beginStroke(emptyBoard(), p(1, 2)), p(5, 6));
-    expect(b).toEqual({ strokes: [], current: { kind: "freehand", points: [p(5, 6)] } });
+    expect(b).toEqual({
+      strokes: [],
+      current: { kind: "freehand", author: "user", points: [p(5, 6)] },
+    });
   });
 });
 
@@ -71,6 +81,7 @@ describe("clearBoard", () => {
 describe("eraseAt", () => {
   const line = (...pts: [number, number][]) => ({
     kind: "freehand" as const,
+    author: "user" as const,
     points: pts.map(([x, y]) => p(x, y)),
   });
   const board = (...strokes: ReturnType<typeof line>[]) => ({ strokes, current: null });
@@ -111,6 +122,7 @@ describe("box", () => {
   it("begins a zero-size box at the given point", () => {
     expect(beginBox(emptyBoard(), p(1, 2)).current).toEqual({
       kind: "box",
+      author: "user",
       from: p(1, 2),
       to: p(1, 2),
     });
@@ -118,13 +130,13 @@ describe("box", () => {
 
   it("moves the opposite corner on extend", () => {
     const b = extendStroke(extendStroke(beginBox(emptyBoard(), p(1, 2)), p(5, 5)), p(9, 8));
-    expect(b.current).toEqual({ kind: "box", from: p(1, 2), to: p(9, 8) });
+    expect(b.current).toEqual({ kind: "box", author: "user", from: p(1, 2), to: p(9, 8) });
   });
 
   it("commits like any other stroke", () => {
     const b = endStroke(extendStroke(beginBox(emptyBoard(), p(0, 0)), p(10, 10)));
     expect(b).toEqual({
-      strokes: [{ kind: "box", from: p(0, 0), to: p(10, 10) }],
+      strokes: [{ kind: "box", author: "user", from: p(0, 0), to: p(10, 10) }],
       current: null,
     });
   });
@@ -142,11 +154,14 @@ describe("box", () => {
 
 describe("outline", () => {
   it("is the points of a freehand stroke", () => {
-    expect(outline({ kind: "freehand", points: [p(0, 0), p(1, 1)] })).toEqual([p(0, 0), p(1, 1)]);
+    expect(outline({ kind: "freehand", author: "user", points: [p(0, 0), p(1, 1)] })).toEqual([
+      p(0, 0),
+      p(1, 1),
+    ]);
   });
 
   it("is the closed rectangle of a box", () => {
-    expect(outline({ kind: "box", from: p(0, 0), to: p(4, 2) })).toEqual([
+    expect(outline({ kind: "box", author: "user", from: p(0, 0), to: p(4, 2) })).toEqual([
       p(0, 0),
       p(4, 0),
       p(4, 2),
@@ -170,5 +185,59 @@ describe("toSnapshot", () => {
   it("produces a document the contract accepts", () => {
     const b = endStroke(beginBox(emptyBoard(), p(0, 0)));
     expect(BoardSnapshot.safeParse(toSnapshot(b, 2)).success).toBe(true);
+  });
+});
+
+describe("authors", () => {
+  it("attributes strokes to the user by default", () => {
+    expect(beginStroke(emptyBoard(), p(0, 0)).current?.author).toBe("user");
+    expect(beginBox(emptyBoard(), p(0, 0)).current?.author).toBe("user");
+    expect(beginArrow(emptyBoard(), p(0, 0)).current?.author).toBe("user");
+  });
+});
+
+describe("arrow", () => {
+  it("begins at a point and moves its head on extend", () => {
+    const b = extendStroke(extendStroke(beginArrow(emptyBoard(), p(1, 2)), p(5, 5)), p(9, 8));
+    expect(b.current).toEqual({ kind: "arrow", author: "user", from: p(1, 2), to: p(9, 8) });
+  });
+
+  it("outlines as its shaft and can be erased by touching it", () => {
+    const arrow = { kind: "arrow" as const, author: "user" as const, from: p(0, 0), to: p(100, 0) };
+    expect(outline(arrow)).toEqual([p(0, 0), p(100, 0)]);
+    expect(eraseAt({ strokes: [arrow], current: null }, p(50, 3), 5).strokes).toEqual([]);
+  });
+});
+
+describe("text", () => {
+  const text = (s: string) => ({
+    kind: "text" as const,
+    author: "agent" as const,
+    at: p(100, 100),
+    text: s,
+  });
+
+  it("outlines as a rectangle that grows with the text", () => {
+    const short = textBounds(text("ab"));
+    const long = textBounds(text("abcdef"));
+    expect(short.x).toBe(100);
+    expect(short.y).toBe(100);
+    expect(short.height).toBe(TEXT_SIZE * TEXT_LINE_HEIGHT);
+    expect(long.width).toBeGreaterThan(short.width);
+  });
+
+  it("treats wide (CJK) characters as wider than ASCII", () => {
+    expect(textBounds(text("見えてる")).width).toBeGreaterThan(textBounds(text("abcd")).width);
+  });
+
+  it("is erased by touching anywhere on it, and not from afar", () => {
+    const board = { strokes: [text("hello")], current: null };
+    expect(eraseAt(board, p(110, 110), 2).strokes).toEqual([]);
+    expect(eraseAt(board, p(500, 500), 2)).toBe(board);
+  });
+
+  it("is not changed by extend", () => {
+    const b = { strokes: [], current: text("hi") };
+    expect(extendStroke(b, p(0, 0))).toBe(b);
   });
 });

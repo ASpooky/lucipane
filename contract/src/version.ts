@@ -1,2 +1,2 @@
 /** Bump on any breaking change to a document in this package. */
-export const CONTRACT_VERSION = 1;
+export const CONTRACT_VERSION = 2;

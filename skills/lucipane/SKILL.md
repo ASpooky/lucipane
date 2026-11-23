@@ -19,25 +19,31 @@ It prints one JSON document:
 
 ```json
 {
-  "contractVersion": 1,
+  "contractVersion": 2,
   "image": {
     "path": "C:\\...\\lucipane\\capture-1795370401068.png",
     "width": 1920,
     "height": 1080
   },
   "annotations": [
-    { "kind": "box", "x": 640, "y": 300, "width": 420, "height": 180 },
-    { "kind": "freehand", "points": [[200, 820], [260, 760], [330, 700]] }
+    { "kind": "box", "author": "user", "x": 640, "y": 300, "width": 420, "height": 180 },
+    { "kind": "arrow", "author": "user", "from": [200, 820], "to": [600, 480] },
+    { "kind": "freehand", "author": "user", "points": [[200, 820], [260, 760], [330, 700]] }
   ]
 }
 ```
 
-Then read the image at `image.path`. The marks are visible in it in red, and `annotations`
-gives their geometry in the image's pixels (origin top-left):
+Then read the image at `image.path`. The marks are visible in it, and `annotations` gives their
+geometry in the image's pixels (origin top-left):
 
 - `box`: the user framed this area. It is usually the subject of their question.
-- `freehand`: a circle, underline, arrow or handwriting. Points are in drawing order, so the
-  last point is where the pen lifted, often the head of an arrow.
+- `arrow`: points from `from` to `to`; the head is at `to`.
+- `freehand`: a circle, underline, hand-drawn arrow or handwriting. Points are in drawing
+  order (simplified), so the last point is where the pen lifted, often the head of an arrow.
+- `text`: a label at `x`, `y` (its top-left corner).
+
+`author` is `user` for the user's marks (drawn in red) and `agent` for marks an agent placed
+(drawn in blue). Answer about the user's marks; the agent's are earlier replies.
 
 Look at what lies under or inside each mark in the image before answering. When several marks
 are present, they may be related (an arrow from one box to another), so read them together.

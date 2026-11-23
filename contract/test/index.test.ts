@@ -1,28 +1,55 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { Annotation, Board, BoardSnapshot, CaptureOutput, CONTRACT_VERSION } from "../src/index.ts";
+import {
+  Annotation,
+  Board,
+  BoardSnapshot,
+  CaptureOutput,
+  CONTRACT_VERSION,
+  Stroke,
+} from "../src/index.ts";
 
 // The fixtures are shared with the Rust tests in native/src-tauri, so both sides are
 // checked against the same documents.
 const fixture = (name: string): unknown =>
   JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), "utf8"));
 
-const box = { kind: "box", from: { x: 0, y: 0 }, to: { x: 10, y: 5 } };
+const box = { kind: "box", author: "user", from: { x: 0, y: 0 }, to: { x: 10, y: 5 } };
 
 describe("contract", () => {
   it("exposes a contract version", () => {
-    expect(CONTRACT_VERSION).toBe(1);
+    expect(CONTRACT_VERSION).toBe(2);
   });
 });
 
 describe("Board", () => {
-  it("accepts freehand strokes and boxes", () => {
-    const board = { strokes: [{ kind: "freehand", points: [{ x: 1, y: 2 }] }, box], current: null };
+  it("accepts every stroke kind", () => {
+    const board = {
+      strokes: [
+        { kind: "freehand", author: "user", points: [{ x: 1, y: 2 }] },
+        box,
+        { kind: "arrow", author: "agent", from: { x: 0, y: 0 }, to: { x: 5, y: 5 } },
+        { kind: "text", author: "agent", at: { x: 3, y: 4 }, text: "here" },
+      ],
+      current: null,
+    };
     expect(Board.parse(board)).toEqual(board);
   });
 
   it("rejects an unknown stroke kind", () => {
     expect(Board.safeParse({ strokes: [{ kind: "circle" }], current: null }).success).toBe(false);
+  });
+
+  it("requires an author", () => {
+    expect(
+      Stroke.safeParse({ kind: "box", from: { x: 0, y: 0 }, to: { x: 1, y: 1 } }).success,
+    ).toBe(false);
+    expect(Stroke.safeParse({ ...box, author: "someone" }).success).toBe(false);
+  });
+
+  it("rejects empty text", () => {
+    const text = { kind: "text", author: "agent", at: { x: 0, y: 0 }, text: "" };
+    expect(Stroke.safeParse(text).success).toBe(false);
   });
 });
 
@@ -48,12 +75,17 @@ describe("CaptureOutput (CLI stdout -> agent)", () => {
   });
 
   it("rejects a box with negative size", () => {
-    expect(Annotation.safeParse({ kind: "box", x: 0, y: 0, width: -1, height: 5 }).success).toBe(
-      false,
-    );
+    const negative = { kind: "box", author: "user", x: 0, y: 0, width: -1, height: 5 };
+    expect(Annotation.safeParse(negative).success).toBe(false);
   });
 
   it("rejects fractional pixel coordinates", () => {
-    expect(Annotation.safeParse({ kind: "freehand", points: [[0.5, 1]] }).success).toBe(false);
+    const fractional = { kind: "freehand", author: "user", points: [[0.5, 1]] };
+    expect(Annotation.safeParse(fractional).success).toBe(false);
+  });
+
+  it("carries the author of each annotation", () => {
+    const arrow = { kind: "arrow", author: "agent", from: [0, 0], to: [10, 10] };
+    expect(Annotation.parse(arrow)).toEqual(arrow);
   });
 });

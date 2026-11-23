@@ -3,19 +3,32 @@
 
 use serde::Serialize;
 
-use crate::board::{BoardSnapshot, Point, Stroke};
+use crate::board::{Author, BoardSnapshot, Point, Stroke};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Annotation {
     Freehand {
+        author: Author,
         points: Vec<[i64; 2]>,
     },
     Box {
+        author: Author,
         x: i64,
         y: i64,
         width: i64,
         height: i64,
+    },
+    Arrow {
+        author: Author,
+        from: [i64; 2],
+        to: [i64; 2],
+    },
+    Text {
+        author: Author,
+        x: i64,
+        y: i64,
+        text: String,
     },
 }
 
@@ -37,21 +50,37 @@ pub fn to_annotations(snapshot: &BoardSnapshot) -> Vec<Annotation> {
         .strokes
         .iter()
         .map(|stroke| match stroke {
-            Stroke::Freehand { points } => {
+            Stroke::Freehand { author, points } => {
                 let mut scaled: Vec<[i64; 2]> = points.iter().map(px).collect();
                 scaled.dedup();
                 Annotation::Freehand {
+                    author: *author,
                     points: simplify(&scaled, SIMPLIFY_TOLERANCE_PX),
                 }
             }
-            Stroke::Box { from, to } => {
+            Stroke::Box { author, from, to } => {
                 let [x1, y1] = px(from);
                 let [x2, y2] = px(to);
                 Annotation::Box {
+                    author: *author,
                     x: x1.min(x2),
                     y: y1.min(y2),
                     width: (x1 - x2).abs(),
                     height: (y1 - y2).abs(),
+                }
+            }
+            Stroke::Arrow { author, from, to } => Annotation::Arrow {
+                author: *author,
+                from: px(from),
+                to: px(to),
+            },
+            Stroke::Text { author, at, text } => {
+                let [x, y] = px(at);
+                Annotation::Text {
+                    author: *author,
+                    x,
+                    y,
+                    text: text.clone(),
                 }
             }
         })
@@ -180,12 +209,14 @@ mod tests {
         let s = snapshot(
             2.0,
             vec![Stroke::Freehand {
+                author: Author::User,
                 points: vec![p(1.2, 2.6), p(3.0, 4.0)],
             }],
         );
         assert_eq!(
             to_annotations(&s),
             vec![Annotation::Freehand {
+                author: Author::User,
                 points: vec![[2, 5], [6, 8]]
             }]
         );
@@ -196,12 +227,14 @@ mod tests {
         let s = snapshot(
             1.0,
             vec![Stroke::Freehand {
+                author: Author::User,
                 points: vec![p(5.0, 5.0), p(5.1, 4.9)],
             }],
         );
         assert_eq!(
             to_annotations(&s),
             vec![Annotation::Freehand {
+                author: Author::User,
                 points: vec![[5, 5]]
             }]
         );
@@ -212,6 +245,7 @@ mod tests {
         let s = snapshot(
             1.0,
             vec![Stroke::Box {
+                author: Author::User,
                 from: p(100.0, 80.0),
                 to: p(40.0, 20.0),
             }],
@@ -219,6 +253,7 @@ mod tests {
         assert_eq!(
             to_annotations(&s),
             vec![Annotation::Box {
+                author: Author::User,
                 x: 40,
                 y: 20,
                 width: 60,
