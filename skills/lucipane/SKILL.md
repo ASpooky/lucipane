@@ -19,7 +19,7 @@ It prints one JSON document:
 
 ```json
 {
-  "contractVersion": 2,
+  "contractVersion": 3,
   "image": {
     "path": "C:\\...\\lucipane\\capture-1795370401068.png",
     "width": 1920,

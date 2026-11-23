@@ -2,11 +2,13 @@
 //!
 //! `capture` runs entirely in this process: the overlay's strokes are on screen, so they are
 //! in the screenshot, and their geometry comes from the board file the running app keeps
-//! up to date. `clear` and `draw` must reach the running app; they are forwarded by the
-//! single-instance plugin (see lib.rs).
+//! up to date. `wait` polls that board file until the user hands a drawing over, then
+//! captures like `capture`. `clear` and `draw` must reach the running app; they are forwarded
+//! by the single-instance plugin (see lib.rs).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Serialize;
 
@@ -22,13 +24,23 @@ usage:
   lucipane draw box --x X --y Y --w W --h H
   lucipane draw arrow --from X,Y --to X,Y
   lucipane draw text --x X --y Y --text TEXT
-                                        draw as the agent, in pixels of the capture image";
+                                        draw as the agent, in pixels of the capture image
+  lucipane wait [--out <file.png>]      block until the user leaves draw mode after drawing,
+                                        then print the same output as capture";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
-    Capture { out: Option<PathBuf> },
-    Clear { agent_only: bool },
+    Capture {
+        out: Option<PathBuf>,
+    },
+    Clear {
+        agent_only: bool,
+    },
     Draw(Shape),
+    /// Block until the user hands a drawing over, then capture.
+    Wait {
+        out: Option<PathBuf>,
+    },
     Help,
 }
 
@@ -51,6 +63,10 @@ pub fn parse(args: &[String]) -> Result<Option<Command>, String> {
         ["clear"] => Command::Clear { agent_only: false },
         ["clear", "--agent"] => Command::Clear { agent_only: true },
         ["draw", kind, rest @ ..] => Command::Draw(parse_shape(kind, rest)?),
+        ["wait"] => Command::Wait { out: None },
+        ["wait", "--out", path] => Command::Wait {
+            out: Some(PathBuf::from(path)),
+        },
         ["help" | "--help" | "-h"] => Command::Help,
         _ => return Err(unrecognized(&args)),
     };
@@ -193,22 +209,28 @@ pub fn run(command: Command) -> i32 {
             println!("{USAGE}");
             0
         }
-        Command::Capture { out } => match capture(out) {
-            Ok(output) => {
-                println!(
-                    "{}",
-                    serde_json::to_string(&output).expect("output serializes")
-                );
-                0
-            }
-            Err(e) => {
-                eprintln!("lucipane capture: {e}");
-                1
-            }
-        },
+        Command::Capture { out } => print_capture("capture", capture(out)),
+        Command::Wait { out } => print_capture("wait", wait(out)),
         // Reaching here means no overlay was running to forward the command to.
         Command::Clear { .. } | Command::Draw(_) => {
             eprintln!("lucipane: the overlay is not running");
+            1
+        }
+    }
+}
+
+/// Print a capture as one JSON line, or the error, and return the exit code.
+fn print_capture(name: &str, result: Result<CaptureOutput, String>) -> i32 {
+    match result {
+        Ok(output) => {
+            println!(
+                "{}",
+                serde_json::to_string(&output).expect("output serializes")
+            );
+            0
+        }
+        Err(e) => {
+            eprintln!("lucipane {name}: {e}");
             1
         }
     }
@@ -247,6 +269,39 @@ fn capture(out: Option<PathBuf>) -> Result<CaptureOutput, String> {
         image.height(),
         board.as_ref(),
     ))
+}
+
+/// How often `wait` reads the board file. The file is tiny, so this is cheap.
+const WAIT_POLL: Duration = Duration::from_millis(250);
+
+fn wait(out: Option<PathBuf>) -> Result<CaptureOutput, String> {
+    let file = board_file().ok_or("no data directory on this system")?;
+    wait_for_submission(|| read_submission(&file), || std::thread::sleep(WAIT_POLL))?;
+    capture(out)
+}
+
+/// Read the submission count from the board file. The overlay writes the file at launch and
+/// removes it on exit, so a missing file means it is not running (or just stopped).
+fn read_submission(file: &Path) -> Result<u64, String> {
+    let json = std::fs::read_to_string(file)
+        .map_err(|_| "the overlay is not running (no board file)".to_string())?;
+    Ok(BoardSnapshot::parse(&json)?.submission)
+}
+
+/// Read the submission count, then keep reading (with `pause` in between) until it differs
+/// from the first reading. Any difference counts, not just an increase: a restarted overlay
+/// starts again from 0. A failed read ends the wait with that error.
+fn wait_for_submission(
+    mut read: impl FnMut() -> Result<u64, String>,
+    mut pause: impl FnMut(),
+) -> Result<(), String> {
+    let start = read()?;
+    loop {
+        pause();
+        if read()? != start {
+            return Ok(());
+        }
+    }
 }
 
 /// `<temp dir>/lucipane/capture-<unix millis>.png`
@@ -300,6 +355,21 @@ mod tests {
         );
         assert_eq!(parse(&args(&["help"])), Ok(Some(Command::Help)));
         assert_eq!(parse(&args(&["--help"])), Ok(Some(Command::Help)));
+    }
+
+    #[test]
+    fn parses_wait() {
+        assert_eq!(
+            parse(&args(&["wait"])),
+            Ok(Some(Command::Wait { out: None }))
+        );
+        assert_eq!(
+            parse(&args(&["wait", "--out", "shot.png"])),
+            Ok(Some(Command::Wait {
+                out: Some(PathBuf::from("shot.png"))
+            }))
+        );
+        assert!(parse(&args(&["wait", "--out"])).is_err());
     }
 
     #[test]
@@ -408,6 +478,38 @@ mod tests {
         );
         assert!(!Command::Capture { out: None }.is_forwarded());
         assert!(!Command::Help.is_forwarded());
+        assert!(!Command::Wait { out: None }.is_forwarded());
+    }
+
+    /// Feeds `wait_for_submission` a scripted sequence of readings.
+    fn run_wait(readings: &[Result<u64, &str>]) -> (Result<(), String>, usize) {
+        let mut readings = readings.iter().map(|r| r.map_err(str::to_string));
+        let mut pauses = 0;
+        let result = wait_for_submission(
+            || readings.next().expect("read past the scripted readings"),
+            || pauses += 1,
+        );
+        (result, pauses)
+    }
+
+    #[test]
+    fn wait_returns_once_the_submission_count_changes() {
+        assert_eq!(run_wait(&[Ok(3), Ok(3), Ok(3), Ok(4)]), (Ok(()), 3));
+    }
+
+    #[test]
+    fn wait_treats_a_reset_count_as_a_change() {
+        // A restarted overlay starts counting from 0 again.
+        assert_eq!(run_wait(&[Ok(5), Ok(0)]), (Ok(()), 1));
+    }
+
+    #[test]
+    fn wait_fails_when_the_board_cannot_be_read() {
+        assert_eq!(run_wait(&[Err("no board")]), (Err("no board".into()), 0));
+        assert_eq!(
+            run_wait(&[Ok(1), Ok(1), Err("gone")]),
+            (Err("gone".into()), 2)
+        );
     }
 
     #[test]
@@ -415,6 +517,7 @@ mod tests {
         let board = BoardSnapshot {
             contract_version: CONTRACT_VERSION,
             scale: 2.0,
+            submission: 0,
             strokes: vec![Stroke::Box {
                 author: Author::User,
                 from: Point { x: 0.0, y: 0.0 },

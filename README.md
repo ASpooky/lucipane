@@ -25,18 +25,27 @@ lucipane clear [--agent]              # erase everything (or only what agents dr
 lucipane draw box --x X --y Y --w W --h H         # draw as the agent, in blue,
 lucipane draw arrow --from X,Y --to X,Y           # in pixels of the capture image
 lucipane draw text --x X --y Y --text TEXT
+lucipane wait [--out <file.png>]      # block until you leave draw mode after drawing,
+                                      # then print the same JSON as capture
 ```
 
-`capture` runs in its own process: the drawings are part of the screenshot, and their
-geometry comes from a board file the overlay keeps up to date
-(`<data dir>/dev.aspooky.lucipane/board.json`). `clear` and `draw` are forwarded to the running overlay.
+`capture` and `wait` run in their own process: the drawings are part of the screenshot, and
+their geometry comes from a board file the overlay keeps up to date
+(`<data dir>/dev.aspooky.lucipane/board.json`). Leaving draw mode with changed drawings counts
+up a submission number in that file, which is what `wait` watches. `clear` and `draw` are
+forwarded to the running overlay.
 No network port is opened.
 
 ### Agent skill
 
 [`skills/lucipane/SKILL.md`](skills/lucipane/SKILL.md) teaches an agent when and how to use
-the CLI. For Claude Code, copy or link the folder into `~/.claude/skills/` and make sure
-`lucipane` is on your `PATH`.
+the CLI.
+[`skills/lucipane-wait/SKILL.md`](skills/lucipane-wait/SKILL.md) is started by hand
+(`/lucipane-wait` in Claude Code): the agent then answers every drawing you hand over by
+leaving draw mode, without a chat message about it, while the chat keeps working as usual.
+
+For Claude Code, copy or link both folders into `~/.claude/skills/` and make sure `lucipane`
+is on your `PATH`.
 
 ## Layout
 
