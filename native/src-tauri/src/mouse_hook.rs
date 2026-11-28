@@ -57,6 +57,10 @@ pub fn listen(_scale: f64, mut on_input: impl FnMut(Input) + 'static) -> Result<
             rdev::EventType::MouseMove { x, y } => Input::Move { x, y },
             rdev::EventType::ButtonPress(rdev::Button::Middle) => Input::MiddleDown,
             rdev::EventType::ButtonRelease(rdev::Button::Middle) => Input::MiddleUp,
+            // rdev reports whole notches; smaller (touchpad) deltas come through as 0.
+            rdev::EventType::Wheel { delta_y, .. } if delta_y != 0 => Input::Wheel {
+                notches: delta_y as f64,
+            },
             _ => return,
         };
         on_input(input);

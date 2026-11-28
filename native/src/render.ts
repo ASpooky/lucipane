@@ -10,6 +10,7 @@ import {
   TEXT_SIZE,
   textBounds,
 } from "./board.ts";
+import { type AnchorOf, isVisible } from "./scroll.ts";
 
 export type Pen = { readonly color: string; readonly width: number };
 
@@ -74,9 +75,30 @@ function drawText(ctx: CanvasRenderingContext2D, text: Extract<Stroke, { kind: "
   ctx.fillText(text.text, x, y + (TEXT_SIZE * (TEXT_LINE_HEIGHT - 1)) / 2);
 }
 
-/** Clear and redraw everything. Fine for a spike; incremental drawing can come later. */
-export function render(ctx: CanvasRenderingContext2D, board: Board, palette: Palette): void {
+/**
+ * Clear and redraw everything. Fine for a spike; incremental drawing can come later.
+ * Strokes that follow a window's scrolling are clipped to that window.
+ */
+export function render(
+  ctx: CanvasRenderingContext2D,
+  board: Board,
+  palette: Palette,
+  anchorOf: AnchorOf = () => undefined,
+): void {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  for (const s of board.strokes) drawStroke(ctx, s, palette[s.author]);
+  for (const s of board.strokes) {
+    const anchor = anchorOf(s);
+    if (!anchor) {
+      drawStroke(ctx, s, palette[s.author]);
+    } else if (isVisible(s, anchorOf)) {
+      const { x, y, width, height } = anchor.clip;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, y, width, height);
+      ctx.clip();
+      drawStroke(ctx, s, palette[s.author]);
+      ctx.restore();
+    }
+  }
   if (board.current) drawStroke(ctx, board.current, palette[board.current.author]);
 }

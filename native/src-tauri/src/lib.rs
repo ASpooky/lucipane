@@ -1,4 +1,4 @@
-mod annotate;
+﻿mod annotate;
 mod board;
 pub mod cli;
 mod focus;
@@ -6,13 +6,14 @@ mod mouse_hook;
 #[cfg(target_os = "macos")]
 mod panel;
 mod pen;
+mod scroll;
 pub mod shape;
 mod workspace;
 
-use std::sync::Mutex;
+use std::sync::{Mutex, mpsc};
 
 use board::BoardSnapshot;
-use pen::{PenEvent, PenState, Viewport};
+use pen::{Input, PenEvent, PenState, Viewport};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow, ipc::Channel};
 
 const OVERLAY: &str = "overlay";
@@ -246,11 +247,15 @@ fn register_draw_mode_hotkey(app: &AppHandle) -> tauri::Result<()> {
 }
 
 /// Listen to global mouse input on a dedicated thread and forward pen events to the
-/// subscribed WebView.
+/// subscribed WebView. Wheel turns go to a second thread that works out what scrolled.
 fn spawn_mouse_hook(app: AppHandle, viewport: Viewport) {
+    let wheel = spawn_scroll_follower(app.clone(), viewport);
     std::thread::spawn(move || {
         let mut state = PenState::default();
         let result = mouse_hook::listen(viewport.scale, move |input| {
+            if let (Input::Wheel { notches }, Some((x, y))) = (input, state.cursor) {
+                let _ = wheel.send((x, y, notches));
+            }
             let (next, pen_event) = pen::step(state, input, &viewport);
             state = next;
             let Some(pen_event) = pen_event else { return };
@@ -263,6 +268,19 @@ fn spawn_mouse_hook(app: AppHandle, viewport: Viewport) {
             eprintln!("global mouse hook failed: {e}");
         }
     });
+}
+
+/// Turn wheel notches at a cursor position into "scroll" events for the WebView. Looking up
+/// the window, its app and its page takes system calls, a file read and waiting for scrolling
+/// to settle, none of which may happen inside the mouse hook: Windows drops a slow hook.
+fn spawn_scroll_follower(app: AppHandle, viewport: Viewport) -> mpsc::Sender<(f64, f64, f64)> {
+    let (sender, receiver) = mpsc::channel::<(f64, f64, f64)>();
+    std::thread::spawn(move || {
+        scroll::follow_wheel(receiver, viewport, |event| {
+            let _ = app.emit("scroll", event);
+        });
+    });
+    sender
 }
 
 /// Start the overlay. With `forwarded = Some(..)`, this launch only exists to hand a command

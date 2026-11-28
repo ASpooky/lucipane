@@ -13,6 +13,11 @@ pub enum Input {
     },
     MiddleDown,
     MiddleUp,
+    /// The vertical wheel turned by this many notches (positive: away from the user). It does
+    /// not draw; it scrolls the window under the cursor (see scroll.rs).
+    Wheel {
+        notches: f64,
+    },
 }
 
 /// Sent to the WebView. Coordinates are CSS pixels relative to the overlay window.
@@ -84,7 +89,7 @@ pub fn step(state: PenState, input: Input, viewport: &Viewport) -> (PenState, Op
             },
             Some(PenEvent::Up),
         ),
-        Input::MiddleUp => (state, None),
+        Input::MiddleUp | Input::Wheel { .. } => (state, None),
     }
 }
 
@@ -107,6 +112,13 @@ mod tests {
             out.extend(ev);
         }
         out
+    }
+
+    #[test]
+    fn the_wheel_does_not_draw() {
+        let wheel = Input::Wheel { notches: -1.0 };
+        assert!(run(&[Input::Move { x: 0.0, y: 0.0 }, Input::MiddleDown, wheel]).len() == 1);
+        assert!(run(&[wheel]).is_empty());
     }
 
     #[test]

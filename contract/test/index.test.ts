@@ -7,6 +7,7 @@ import {
   CaptureOutput,
   ClearEvent,
   CONTRACT_VERSION,
+  ScrollEvent,
   Stroke,
 } from "../src/index.ts";
 
@@ -110,5 +111,26 @@ describe("ClearEvent (Rust -> overlay WebView)", () => {
     expect(ClearEvent.parse(event)).toEqual(event);
     expect(ClearEvent.safeParse({ agentOnly: true }).success).toBe(false);
     expect(ClearEvent.safeParse({}).success).toBe(false);
+  });
+});
+
+describe("ScrollEvent (Rust -> overlay WebView)", () => {
+  it("parses the shared fixture", () => {
+    expect(ScrollEvent.parse(fixture("scroll-event.json"))).toEqual({
+      window: 263174,
+      rect: { x: 13, y: 60, width: 1894, height: 959 },
+      dy: -300,
+    });
+  });
+
+  it("rejects a window id that is not a non-negative integer, or a negative size", () => {
+    const event = { window: 1, rect: { x: 0, y: 0, width: 10, height: 10 }, dy: 50 };
+    expect(ScrollEvent.safeParse(event).success).toBe(true);
+    expect(ScrollEvent.safeParse({ ...event, window: -1 }).success).toBe(false);
+    expect(ScrollEvent.safeParse({ ...event, window: 1.5 }).success).toBe(false);
+    expect(ScrollEvent.safeParse({ ...event, rect: { ...event.rect, width: -1 } }).success).toBe(
+      false,
+    );
+    expect(ScrollEvent.safeParse({ ...event, dy: undefined }).success).toBe(false);
   });
 });
