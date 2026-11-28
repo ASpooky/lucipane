@@ -102,10 +102,16 @@ export function clearBoard(_board: Board): Board {
 /**
  * Remove every finished stroke that passes within `radius` of `p`.
  * Whole strokes are erased (not pixels) so the board stays a plain list of strokes.
- * Returns the same board when nothing is hit.
+ * Returns the same board when nothing is hit. Strokes for which `canErase` is false (ones
+ * scrolled out of view) are never hit.
  */
-export function eraseAt(board: Board, p: Point, radius: number): Board {
-  const kept = board.strokes.filter((s) => !strokeHits(s, p, radius));
+export function eraseAt(
+  board: Board,
+  p: Point,
+  radius: number,
+  canErase: (stroke: Stroke) => boolean = () => true,
+): Board {
+  const kept = board.strokes.filter((s) => !(canErase(s) && strokeHits(s, p, radius)));
   if (kept.length === board.strokes.length) return board;
   return { ...board, strokes: kept };
 }

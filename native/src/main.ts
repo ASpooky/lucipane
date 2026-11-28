@@ -5,9 +5,10 @@
 // - Finished strokes are saved to the board file for the `lucipane capture` CLI, and
 //   `lucipane clear` and `lucipane draw` (agents drawing in blue) arrive as events.
 // - Leaving draw mode hands the drawing over to an agent waiting in `lucipane wait`.
+// - Marks follow the scrolling of the window they are on (a "scroll" event from Rust).
 // - In a plain browser (http://localhost:1420) draw mode is always on, for quick testing.
 
-import { ClearEvent, Stroke } from "@lucipane/contract";
+import { ClearEvent, ScrollEvent, Stroke } from "@lucipane/contract";
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -30,6 +31,7 @@ import {
 } from "./board.ts";
 import { applyPenEvent, type PenEvent } from "./pen.ts";
 import { type Palette, render } from "./render.ts";
+import { type Anchor, type AnchorOf, isVisible, scrollStrokes } from "./scroll.ts";
 import { clearPanes, type Pane, switchPane } from "./workspaces.ts";
 
 type Tool = "pen" | "box" | "arrow" | "eraser" | "text";
@@ -89,19 +91,26 @@ let submittedStrokes = board.strokes;
 // `submittedStrokes` belong to the current one; the others wait here.
 let workspace = "default";
 let parkedPanes = new Map<string, Pane>();
+// The window each stroke scrolls with, keyed by the stroke itself, so it carries over to
+// every pane. Moving a stroke replaces it, and its replacement gets the anchor.
+const anchors = new WeakMap<Stroke, Anchor>();
+const anchorOf: AnchorOf = (stroke) => anchors.get(stroke);
+// Strokes scrolled out of their window are off screen: not erasable, not in the board file.
+const onScreen = (stroke: Stroke) => isVisible(stroke, anchorOf);
 
 function update(next: Board): void {
   if (next === board) return;
   const finishedChanged = next.strokes !== board.strokes;
   board = next;
-  render(ctx, board, palette);
+  render(ctx, board, palette, anchorOf);
   if (finishedChanged) saveBoard();
 }
 
-/** Keep the board file current for `lucipane capture`. Only finished strokes count. */
+/** Keep the board file current for `lucipane capture`. Only finished strokes on screen count. */
 function saveBoard(): void {
   if (!isTauri()) return;
-  const snapshot = toSnapshot(board, window.devicePixelRatio, submission);
+  const visible = { ...board, strokes: board.strokes.filter(onScreen) };
+  const snapshot = toSnapshot(visible, window.devicePixelRatio, submission);
   invoke("save_board", { snapshot }).catch((e: unknown) => {
     console.error("failed to save the board", e);
   });
@@ -136,7 +145,7 @@ function switchWorkspace(next: string): void {
   board = switched.pane.board;
   submittedStrokes = switched.pane.submitted;
   erasing = false;
-  render(ctx, board, palette);
+  render(ctx, board, palette, anchorOf);
   saveBoard();
 }
 
@@ -181,7 +190,7 @@ function resize(): void {
   canvas.width = Math.round(window.innerWidth * dpr);
   canvas.height = Math.round(window.innerHeight * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  render(ctx, board, palette);
+  render(ctx, board, palette, anchorOf);
 }
 
 async function listenToRust(): Promise<void> {
@@ -199,6 +208,17 @@ async function listenToRust(): Promise<void> {
     const clear = (b: Board) => (request.data.agentOnly ? clearAuthor(b, "agent") : clearBoard(b));
     if (request.data.allDesktops) parkedPanes = clearPanes(parkedPanes, clear);
     update(clear(board));
+  });
+  // The wheel scrolled another app: move the marks on it with its content. A moved stroke is
+  // the same mark, so the last handover is remapped rather than counted as a change.
+  await listen<unknown>("scroll", (e) => {
+    const event = ScrollEvent.safeParse(e.payload);
+    if (!event.success) return console.error("invalid scroll event", event.error);
+    const scrolled = scrollStrokes(board.strokes, anchorOf, event.data);
+    for (const [stroke, anchor] of scrolled.anchors) anchors.set(stroke, anchor);
+    submittedStrokes = submittedStrokes.map((s) => scrolled.moved.get(s) ?? s);
+    if (scrolled.strokes === board.strokes) render(ctx, board, palette, anchorOf);
+    else update({ ...board, strokes: scrolled.strokes });
   });
   await listen<unknown>("agent-draw", (e) => {
     const stroke = Stroke.safeParse(e.payload);
@@ -230,7 +250,7 @@ function listenToPointer(): void {
     canvas.setPointerCapture(e.pointerId);
     if (tool === "eraser") {
       erasing = true;
-      update(eraseAt(board, toPoint(e), ERASER_RADIUS));
+      update(eraseAt(board, toPoint(e), ERASER_RADIUS, onScreen));
     } else {
       const begin = BEGIN[tool];
       update(begin(board, toPoint(e)));
@@ -238,7 +258,7 @@ function listenToPointer(): void {
   });
   canvas.addEventListener("pointermove", (e) => {
     if (!drawMode || tool === "text" || !(e.buttons & LEFT_HELD)) return;
-    if (erasing) update(eraseAt(board, toPoint(e), ERASER_RADIUS));
+    if (erasing) update(eraseAt(board, toPoint(e), ERASER_RADIUS, onScreen));
     else update(extendStroke(board, toPoint(e)));
   });
   const finish = (e: PointerEvent) => {

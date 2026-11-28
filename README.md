@@ -44,6 +44,13 @@ with their desktop and come back when you return; `capture`, `wait`, `clear` and
 the desktop you are on. Without GlazeWM, Windows has a single pane. On macOS the overlay is a
 non-activating panel without a Dock icon, so it also floats over full-screen apps.
 
+On Windows, marks follow the mouse wheel: scrolling Chrome (and other Chromium browsers), VS
+Code or Windows Terminal moves the marks on that window with its content, and marks scrolled out
+of view are hidden (also from `capture`) until you scroll back. Each app scrolls by its own,
+measured amount per wheel notch (VS Code's `editor.mouseWheelScrollSensitivity` is read from
+its settings); marks on other apps stay put. Scrollbars, keys and touchpads are not followed
+yet, and neither is macOS.
+
 ### Agent skill
 
 [`skills/lucipane/SKILL.md`](skills/lucipane/SKILL.md) teaches an agent when and how to use

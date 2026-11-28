@@ -84,6 +84,11 @@ describe("clearBoard", () => {
 });
 
 describe("eraseAt", () => {
+  it("leaves strokes it may not erase (scrolled out of view)", () => {
+    const b = board(line([0, 0], [100, 0]));
+    expect(eraseAt(b, p(50, 0), 5, () => false)).toBe(b);
+  });
+
   const line = (...pts: [number, number][]) => ({
     kind: "freehand" as const,
     author: "user" as const,
