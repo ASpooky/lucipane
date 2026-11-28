@@ -21,7 +21,8 @@ Agents use the same executable as a CLI:
 
 ```sh
 lucipane capture [--out <file.png>]   # screenshot (with your drawings) + annotations as JSON
-lucipane clear [--agent]              # erase everything (or only what agents drew)
+lucipane clear [--agent] [--all]      # erase this desktop's pane (or only what agents drew);
+                                      # --all: every desktop's pane
 lucipane draw box --x X --y Y --w W --h H         # draw as the agent, in blue,
 lucipane draw arrow --from X,Y --to X,Y           # in pixels of the capture image
 lucipane draw text --x X --y Y --text TEXT
@@ -36,6 +37,12 @@ their geometry comes from a board file the overlay keeps up to date
 up a submission number in that file, which is what `wait` watches. `clear` and `draw` are
 forwarded to the running overlay.
 No network port is opened.
+
+Each virtual desktop has its own pane: a macOS Space (every full-screen window gets one) or,
+on Windows, a GlazeWM workspace (read over GlazeWM's IPC on `localhost:6123`). Drawings stay
+with their desktop and come back when you return; `capture`, `wait`, `clear` and `draw` work on
+the desktop you are on. Without GlazeWM, Windows has a single pane. On macOS the overlay is a
+non-activating panel without a Dock icon, so it also floats over full-screen apps.
 
 ### Agent skill
 

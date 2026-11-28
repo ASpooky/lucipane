@@ -106,7 +106,9 @@ describe("CaptureOutput (CLI stdout -> agent)", () => {
 
 describe("ClearEvent (Rust -> overlay WebView)", () => {
   it("says whether to clear only the agent's strokes", () => {
-    expect(ClearEvent.parse({ agentOnly: true })).toEqual({ agentOnly: true });
+    const event = { agentOnly: true, allDesktops: false };
+    expect(ClearEvent.parse(event)).toEqual(event);
+    expect(ClearEvent.safeParse({ agentOnly: true }).success).toBe(false);
     expect(ClearEvent.safeParse({}).success).toBe(false);
   });
 });

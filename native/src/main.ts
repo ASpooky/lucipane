@@ -28,6 +28,7 @@ import {
 } from "./board.ts";
 import { applyPenEvent, type PenEvent } from "./pen.ts";
 import { type Palette, render } from "./render.ts";
+import { clearPanes, type Pane, switchPane } from "./workspaces.ts";
 
 type Tool = "pen" | "box" | "arrow" | "eraser";
 
@@ -73,6 +74,10 @@ let erasing = false;
 // user's strokes changed counts the submission up, and the board file carries the count.
 let submission = 0;
 let submittedStrokes = board.strokes;
+// Each virtual desktop (macOS Space, GlazeWM workspace) has its own pane. `board` and
+// `submittedStrokes` belong to the current one; the others wait here.
+let workspace = "default";
+let parkedPanes = new Map<string, Pane>();
 
 function update(next: Board): void {
   if (next === board) return;
@@ -108,6 +113,18 @@ function submit(): void {
   saveBoard();
 }
 
+function switchWorkspace(next: string): void {
+  if (next === workspace) return;
+  const switched = switchPane(parkedPanes, workspace, { board, submitted: submittedStrokes }, next);
+  parkedPanes = switched.parked;
+  workspace = next;
+  board = switched.pane.board;
+  submittedStrokes = switched.pane.submitted;
+  erasing = false;
+  render(ctx, board, palette);
+  saveBoard();
+}
+
 function setTool(next: Tool): void {
   tool = next;
   document.body.classList.toggle("tool-eraser", next === "eraser");
@@ -128,13 +145,17 @@ async function listenToRust(): Promise<void> {
   const channel = new Channel<PenEvent>();
   channel.onmessage = (ev) => update(applyPenEvent(board, ev));
   await invoke("subscribe_pen", { onEvent: channel });
+  workspace = await invoke<string>("current_workspace");
+  await listen<string>("workspace", (e) => switchWorkspace(e.payload));
   await listen<boolean>("draw-mode", (e) => setDrawMode(e.payload));
   // Forwarded `lucipane clear [--agent]` and `lucipane draw` commands. Their payloads come
   // from another process, so they are validated against the contract before use.
   await listen<unknown>("clear", (e) => {
     const request = ClearEvent.safeParse(e.payload);
     if (!request.success) return console.error("invalid clear event", request.error);
-    update(request.data.agentOnly ? clearAuthor(board, "agent") : clearBoard(board));
+    const clear = (b: Board) => (request.data.agentOnly ? clearAuthor(b, "agent") : clearBoard(b));
+    if (request.data.allDesktops) parkedPanes = clearPanes(parkedPanes, clear);
+    update(clear(board));
   });
   await listen<unknown>("agent-draw", (e) => {
     const stroke = Stroke.safeParse(e.payload);

@@ -3,8 +3,11 @@ mod board;
 pub mod cli;
 mod focus;
 mod mouse_hook;
+#[cfg(target_os = "macos")]
+mod panel;
 mod pen;
 pub mod shape;
+mod workspace;
 
 use std::sync::Mutex;
 
@@ -78,6 +81,11 @@ fn toggle_draw_mode(app: &AppHandle) {
 }
 
 #[tauri::command]
+fn current_workspace() -> String {
+    workspace::current()
+}
+
+#[tauri::command]
 fn subscribe_pen(sink: State<'_, PenSink>, on_event: Channel<PenEvent>) {
     *sink.0.lock().expect("pen sink poisoned") = Some(on_event);
 }
@@ -125,9 +133,16 @@ fn on_second_instance(app: &AppHandle, argv: &[String]) {
     // argv[0] is the program path. Capture and help run in the other process and never get
     // here, and a plain second launch has nothing to do.
     let result = match cli::parse(argv.get(1..).unwrap_or_default()) {
-        Ok(Some(cli::Command::Clear { agent_only })) => {
-            app.emit("clear", ClearRequest { agent_only })
-        }
+        Ok(Some(cli::Command::Clear {
+            agent_only,
+            all_desktops,
+        })) => app.emit(
+            "clear",
+            ClearRequest {
+                agent_only,
+                all_desktops,
+            },
+        ),
         Ok(Some(cli::Command::Draw(shape))) => {
             // A path can be several strokes; the WebView adds each "agent-draw" event as one.
             let scale = app.state::<OverlayScale>().0;
@@ -148,6 +163,8 @@ fn on_second_instance(app: &AppHandle, argv: &[String]) {
 struct ClearRequest {
     /// Erase only the agent's strokes.
     agent_only: bool,
+    /// Clear the panes of every virtual desktop, not just the current one.
+    all_desktops: bool,
 }
 
 /// Image (physical) pixels per CSS pixel on the overlay's display, for converting the
@@ -164,7 +181,7 @@ fn show_overlay(app: &AppHandle) -> tauri::Result<Viewport> {
         scale: 1.0,
     };
     #[cfg(target_os = "macos")]
-    raise_above_menu_bar(&window)?;
+    float_over_everything(&window)?;
     if let Some(monitor) = window.primary_monitor()? {
         window.set_position(*monitor.position())?;
         window.set_size(*monitor.size())?;
@@ -179,14 +196,26 @@ fn show_overlay(app: &AppHandle) -> tauri::Result<Viewport> {
     Ok(viewport)
 }
 
-/// macOS moves ordinary windows below the menu bar, which would shift the overlay (and every
-/// stroke) down by the menu bar's height.
+/// One pane over everything, like on Windows: macOS would otherwise move the window below the
+/// menu bar (shifting every stroke by its height) and leave it out of the Space that each
+/// full-screen window gets.
 #[cfg(target_os = "macos")]
-fn raise_above_menu_bar(window: &WebviewWindow) -> tauri::Result<()> {
-    use objc2_app_kit::{NSStatusWindowLevel, NSWindow};
+fn float_over_everything(window: &WebviewWindow) -> tauri::Result<()> {
+    use objc2_app_kit::{NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior};
     let ns_window = window.ns_window()?.cast::<NSWindow>();
     // SAFETY: Tauri returns a live NSWindow, and setup runs on the main thread.
-    unsafe { (*ns_window).setLevel(NSStatusWindowLevel) };
+    unsafe {
+        let ns_window = &*ns_window;
+        panel::make_panel(ns_window);
+        ns_window.setLevel(NSStatusWindowLevel);
+        ns_window.setCollectionBehavior(
+            ns_window.collectionBehavior()
+                | NSWindowCollectionBehavior::CanJoinAllSpaces
+                | NSWindowCollectionBehavior::FullScreenAuxiliary
+                | NSWindowCollectionBehavior::Stationary
+                | NSWindowCollectionBehavior::IgnoresCycle,
+        );
+    }
     Ok(())
 }
 
@@ -253,6 +282,7 @@ pub fn run(forwarded: Option<cli::Command>) {
         .manage(DrawMode::default())
         .invoke_handler(tauri::generate_handler![
             subscribe_pen,
+            current_workspace,
             set_draw_mode,
             save_board
         ])
@@ -261,6 +291,10 @@ pub fn run(forwarded: Option<cli::Command>) {
                 // We are the only instance, so there was nobody to forward to.
                 std::process::exit(cli::run(command));
             }
+            // Only an accessory app (no Dock icon, no menu bar) may show its windows over
+            // another app's full-screen Space.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let handle = app.handle();
             let viewport = show_overlay(handle)?;
             reset_board(viewport.scale);
@@ -268,6 +302,10 @@ pub fn run(forwarded: Option<cli::Command>) {
             #[cfg(desktop)]
             register_draw_mode_hotkey(handle)?;
             spawn_mouse_hook(handle.clone(), viewport);
+            let events = handle.clone();
+            workspace::watch(move |id| {
+                let _ = events.emit("workspace", id);
+            });
             Ok(())
         })
         .build(tauri::generate_context!())

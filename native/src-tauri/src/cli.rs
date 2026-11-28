@@ -20,7 +20,8 @@ pub const USAGE: &str = "\
 usage:
   lucipane                              start the overlay
   lucipane capture [--out <file.png>]   capture the primary display and all annotations
-  lucipane clear [--agent]              erase all annotations (or only the agent's)
+  lucipane clear [--agent] [--all]      erase the annotations on this desktop (or only the
+                                        agent's); --all: on every desktop
   lucipane draw box --x X --y Y --w W --h H
   lucipane draw arrow --from X,Y --to X,Y
   lucipane draw text --x X --y Y --text TEXT
@@ -36,6 +37,7 @@ pub enum Command {
     },
     Clear {
         agent_only: bool,
+        all_desktops: bool,
     },
     Draw(Shape),
     /// Block until the user hands a drawing over, then capture.
@@ -61,8 +63,7 @@ pub fn parse(args: &[String]) -> Result<Option<Command>, String> {
         ["capture", "--out", path] => Command::Capture {
             out: Some(PathBuf::from(path)),
         },
-        ["clear"] => Command::Clear { agent_only: false },
-        ["clear", "--agent"] => Command::Clear { agent_only: true },
+        ["clear", flags @ ..] => parse_clear(flags)?,
         ["draw", kind, rest @ ..] => Command::Draw(parse_shape(kind, rest)?),
         ["wait"] => Command::Wait { out: None },
         ["wait", "--out", path] => Command::Wait {
@@ -72,6 +73,24 @@ pub fn parse(args: &[String]) -> Result<Option<Command>, String> {
         _ => return Err(unrecognized(&args)),
     };
     Ok(Some(command))
+}
+
+fn parse_clear(flags: &[&str]) -> Result<Command, String> {
+    let (mut agent_only, mut all_desktops) = (false, false);
+    for flag in flags {
+        let seen = match *flag {
+            "--agent" => std::mem::replace(&mut agent_only, true),
+            "--all" => std::mem::replace(&mut all_desktops, true),
+            _ => return Err(format!("unknown flag for clear: {flag}")),
+        };
+        if seen {
+            return Err(format!("{flag} given twice"));
+        }
+    }
+    Ok(Command::Clear {
+        agent_only,
+        all_desktops,
+    })
 }
 
 fn parse_shape(kind: &str, rest: &[&str]) -> Result<Shape, String> {
@@ -352,13 +371,18 @@ mod tests {
 
     #[test]
     fn parses_clear_and_help() {
+        let clear = |agent_only, all_desktops| {
+            Ok(Some(Command::Clear {
+                agent_only,
+                all_desktops,
+            }))
+        };
+        assert_eq!(parse(&args(&["clear"])), clear(false, false));
+        assert_eq!(parse(&args(&["clear", "--agent"])), clear(true, false));
+        assert_eq!(parse(&args(&["clear", "--all"])), clear(false, true));
         assert_eq!(
-            parse(&args(&["clear"])),
-            Ok(Some(Command::Clear { agent_only: false }))
-        );
-        assert_eq!(
-            parse(&args(&["clear", "--agent"])),
-            Ok(Some(Command::Clear { agent_only: true }))
+            parse(&args(&["clear", "--all", "--agent"])),
+            clear(true, true)
         );
         assert_eq!(parse(&args(&["help"])), Ok(Some(Command::Help)));
         assert_eq!(parse(&args(&["--help"])), Ok(Some(Command::Help)));
@@ -397,6 +421,7 @@ mod tests {
         assert!(parse(&args(&["capture", "--verbose"])).is_err());
         assert!(parse(&args(&["capture", "--out"])).is_err());
         assert!(parse(&args(&["clear", "now"])).is_err());
+        assert!(parse(&args(&["clear", "--all", "--all"])).is_err());
     }
 
     #[test]
@@ -486,7 +511,13 @@ mod tests {
 
     #[test]
     fn forwards_only_commands_for_the_running_overlay() {
-        assert!(Command::Clear { agent_only: false }.is_forwarded());
+        assert!(
+            Command::Clear {
+                agent_only: false,
+                all_desktops: false
+            }
+            .is_forwarded()
+        );
         assert!(
             Command::Draw(Shape::Text {
                 x: 0.0,

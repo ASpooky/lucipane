@@ -82,8 +82,9 @@ Curves are flattened to points; a path may have up to 4000 of them after flatten
 ## Clear the marks
 
 ```sh
-lucipane clear           # everything
+lucipane clear           # everything on the current desktop
 lucipane clear --agent   # only your marks
+lucipane clear --all     # every desktop (Space / GlazeWM workspace) has its own pane: all of them
 ```
 
 Clear the user's marks only when the user asks for it.

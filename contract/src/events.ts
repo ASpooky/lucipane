@@ -10,5 +10,7 @@ import { z } from "zod";
 export const ClearEvent = z.object({
   /** Erase only the agent's strokes, keeping the user's. */
   agentOnly: z.boolean(),
+  /** Clear the panes of every virtual desktop, not just the current one. */
+  allDesktops: z.boolean(),
 });
 export type ClearEvent = z.infer<typeof ClearEvent>;
