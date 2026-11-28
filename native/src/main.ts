@@ -152,6 +152,9 @@ function listenToPointer(): void {
   const LEFT = 0;
   const LEFT_HELD = 1;
 
+  // On macOS, Ctrl+click opens the context menu, whose tracking loop swallows the rest of the
+  // drag. Ctrl is easily still held right after the Ctrl+Alt+Shift+D hotkey.
+  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
   canvas.addEventListener("pointerdown", (e) => {
     // Only the left button; the middle button is handled by the global hook.
     if (!drawMode || e.button !== LEFT) return;
