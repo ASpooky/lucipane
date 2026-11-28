@@ -40,7 +40,8 @@ geometry in the image's pixels (origin top-left):
 - `arrow`: points from `from` to `to`; the head is at `to`.
 - `freehand`: a circle, underline, hand-drawn arrow or handwriting. Points are in drawing
   order (simplified), so the last point is where the pen lifted, often the head of an arrow.
-- `text`: a label at `x`, `y` (its top-left corner).
+- `text`: a label at `x`, `y` (its top-left corner). A user's label is text they typed: read it
+  as their words about what lies around it.
 
 `author` is `user` for the user's marks (drawn in red) and `agent` for marks an agent placed
 (drawn in blue). Answer about the user's marks; the agent's are earlier replies.

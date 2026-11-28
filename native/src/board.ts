@@ -171,6 +171,24 @@ export function addStroke(board: Board, stroke: Stroke): Board {
   return { ...board, strokes: [...board.strokes, stroke] };
 }
 
+/** The contract's limit on a text label, in UTF-16 code units (zod's string length). */
+export const MAX_TEXT_LENGTH = 500;
+
+/**
+ * Add a typed text label with its top-left corner at `at`. Surrounding whitespace is dropped;
+ * nothing is added for empty text, and overlong text is cut to the contract's limit without
+ * splitting a character.
+ */
+export function addText(board: Board, at: Point, text: string, author: Author = "user"): Board {
+  let kept = "";
+  for (const ch of text.trim()) {
+    if (kept.length + ch.length > MAX_TEXT_LENGTH) break;
+    kept += ch;
+  }
+  if (!kept) return board;
+  return addStroke(board, { kind: "text", author, at, text: kept });
+}
+
 /** Remove every finished stroke drawn by `author`. Returns the same board if none. */
 export function clearAuthor(board: Board, author: Author): Board {
   const kept = board.strokes.filter((s) => s.author !== author);

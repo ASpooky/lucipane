@@ -48,3 +48,25 @@ body.draw-mode #board {
 body.draw-mode.tool-eraser #board {
   cursor: cell;
 }
+
+/* Matches how a text label is drawn (TEXT_SIZE, TEXT_LINE_HEIGHT and the user's pen in
+   main.ts), so the typed text stays in place when it becomes a label. */
+#text-input {
+  position: fixed;
+  z-index: 1;
+  min-width: 12em;
+  margin: -2px 0 0 -4px;
+  padding: 0 4px;
+  border: 1px solid rgba(255, 60, 60, 0.85);
+  border-radius: 2px;
+  outline: none;
+  background: rgba(15, 18, 26, 0.8);
+  color: rgba(255, 60, 60, 0.85);
+  font:
+    600 18px / 1.3 system-ui,
+    sans-serif;
+}
+
+body.draw-mode.tool-text #board {
+  cursor: text;
+}

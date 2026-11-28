@@ -1,7 +1,8 @@
-import { BoardSnapshot, CONTRACT_VERSION } from "@lucipane/contract";
+import { BoardSnapshot, CONTRACT_VERSION, Stroke } from "@lucipane/contract";
 import { describe, expect, it } from "vitest";
 import {
   addStroke,
+  addText,
   beginArrow,
   beginBox,
   beginStroke,
@@ -11,6 +12,7 @@ import {
   endStroke,
   eraseAt,
   extendStroke,
+  MAX_TEXT_LENGTH,
   outline,
   TEXT_LINE_HEIGHT,
   TEXT_SIZE,
@@ -295,5 +297,28 @@ describe("agent strokes", () => {
   it("returns the same board when the author has no strokes", () => {
     const b = endStroke(beginStroke(emptyBoard(), p(5, 5)));
     expect(clearAuthor(b, "agent")).toBe(b);
+  });
+});
+
+describe("typed text", () => {
+  it("adds the user's text at the given point", () => {
+    const b = addText(emptyBoard(), p(10, 20), "  ここ直して  ");
+    expect(b.strokes).toEqual([
+      { kind: "text", author: "user", at: p(10, 20), text: "ここ直して" },
+    ]);
+  });
+
+  it("adds nothing for empty text", () => {
+    const board = emptyBoard();
+    expect(addText(board, p(0, 0), "   ")).toBe(board);
+  });
+
+  it("cuts text to the contract's limit without splitting a character", () => {
+    const b = addText(emptyBoard(), p(0, 0), `a${"😀".repeat(MAX_TEXT_LENGTH)}`);
+    const stroke = b.strokes[0];
+    const text = stroke?.kind === "text" ? stroke.text : "";
+    expect(text.length).toBe(MAX_TEXT_LENGTH - 1);
+    expect(text.endsWith("😀")).toBe(true);
+    expect(Stroke.safeParse(stroke).success).toBe(true);
   });
 });

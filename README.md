@@ -11,11 +11,11 @@ agent with a shell) see exactly what you mean.
 
 Run `lucipane` to start the overlay. Then:
 
-| Action                  | How                                             |
-| ----------------------- | ----------------------------------------------- |
-| Draw anywhere, any time | Hold the middle mouse button and drag           |
-| Enter / leave draw mode | `Ctrl+Alt+Shift+D` (`Esc` also leaves)          |
-| In draw mode            | Left-drag draws. `B` box, `E` eraser, `C` clear |
+| Action                  | How                                                                            |
+| ----------------------- | ------------------------------------------------------------------------------ |
+| Draw anywhere, any time | Hold the middle mouse button and drag                                          |
+| Enter / leave draw mode | `Ctrl+Alt+Shift+D` (`Esc` also leaves)                                         |
+| In draw mode            | Left-drag draws. `T` text (click, type, Enter), `B` box, `E` eraser, `C` clear |
 
 Agents use the same executable as a CLI:
 
