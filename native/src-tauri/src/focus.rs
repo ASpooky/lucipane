@@ -1,6 +1,7 @@
 //! Remember which window had focus before draw mode, and give focus back afterwards.
 
-/// An opaque handle to another application's window.
+/// An opaque handle to whatever had focus: a window handle on Windows, the process id of the
+/// frontmost app on macOS.
 #[derive(Debug, Clone, Copy)]
 pub struct WindowHandle(#[allow(dead_code)] isize);
 
@@ -19,11 +20,30 @@ pub fn restore(handle: WindowHandle) {
     unsafe { SetForegroundWindow(handle.0 as _) };
 }
 
-// TODO(macOS): reactivate the previous app (NSRunningApplication).
-#[cfg(not(windows))]
+/// macOS activates apps, not windows: remember the frontmost app and bring it back. Its
+/// previously focused window comes back with it.
+#[cfg(target_os = "macos")]
+pub fn foreground() -> Option<WindowHandle> {
+    use objc2_app_kit::NSWorkspace;
+    let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
+    Some(WindowHandle(app.processIdentifier() as isize))
+}
+
+#[cfg(target_os = "macos")]
+pub fn restore(handle: WindowHandle) {
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+    // An app that has quit since is simply not found.
+    if let Some(app) =
+        NSRunningApplication::runningApplicationWithProcessIdentifier(handle.0 as i32)
+    {
+        app.activateWithOptions(NSApplicationActivationOptions::empty());
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn foreground() -> Option<WindowHandle> {
     None
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn restore(_handle: WindowHandle) {}
