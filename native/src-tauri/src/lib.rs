@@ -2,13 +2,14 @@ mod annotate;
 mod board;
 pub mod cli;
 mod focus;
+mod mouse_hook;
 mod pen;
 pub mod shape;
 
 use std::sync::Mutex;
 
 use board::BoardSnapshot;
-use pen::{Input, PenEvent, PenState, Viewport};
+use pen::{PenEvent, PenState, Viewport};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow, ipc::Channel};
 
 const OVERLAY: &str = "overlay";
@@ -162,6 +163,8 @@ fn show_overlay(app: &AppHandle) -> tauri::Result<Viewport> {
         origin_y: 0.0,
         scale: 1.0,
     };
+    #[cfg(target_os = "macos")]
+    raise_above_menu_bar(&window)?;
     if let Some(monitor) = window.primary_monitor()? {
         window.set_position(*monitor.position())?;
         window.set_size(*monitor.size())?;
@@ -174,6 +177,17 @@ fn show_overlay(app: &AppHandle) -> tauri::Result<Viewport> {
     window.set_ignore_cursor_events(true)?;
     window.show()?;
     Ok(viewport)
+}
+
+/// macOS moves ordinary windows below the menu bar, which would shift the overlay (and every
+/// stroke) down by the menu bar's height.
+#[cfg(target_os = "macos")]
+fn raise_above_menu_bar(window: &WebviewWindow) -> tauri::Result<()> {
+    use objc2_app_kit::{NSStatusWindowLevel, NSWindow};
+    let ns_window = window.ns_window()?.cast::<NSWindow>();
+    // SAFETY: Tauri returns a live NSWindow, and setup runs on the main thread.
+    unsafe { (*ns_window).setLevel(NSStatusWindowLevel) };
+    Ok(())
 }
 
 /// Register the global hotkey that toggles draw mode (Ctrl+Alt+Shift+D).
@@ -202,24 +216,12 @@ fn register_draw_mode_hotkey(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn to_input(event: &rdev::EventType) -> Option<Input> {
-    match *event {
-        rdev::EventType::MouseMove { x, y } => Some(Input::Move { x, y }),
-        rdev::EventType::ButtonPress(rdev::Button::Middle) => Some(Input::MiddleDown),
-        rdev::EventType::ButtonRelease(rdev::Button::Middle) => Some(Input::MiddleUp),
-        _ => None,
-    }
-}
-
-/// Listen to global mouse input on a dedicated thread (`rdev::listen` blocks forever)
-/// and forward pen events to the subscribed WebView.
+/// Listen to global mouse input on a dedicated thread and forward pen events to the
+/// subscribed WebView.
 fn spawn_mouse_hook(app: AppHandle, viewport: Viewport) {
     std::thread::spawn(move || {
         let mut state = PenState::default();
-        let result = rdev::listen(move |event| {
-            let Some(input) = to_input(&event.event_type) else {
-                return;
-            };
+        let result = mouse_hook::listen(viewport.scale, move |input| {
             let (next, pen_event) = pen::step(state, input, &viewport);
             state = next;
             let Some(pen_event) = pen_event else { return };
@@ -229,7 +231,7 @@ fn spawn_mouse_hook(app: AppHandle, viewport: Viewport) {
             }
         });
         if let Err(e) = result {
-            eprintln!("global mouse hook failed: {e:?}");
+            eprintln!("global mouse hook failed: {e}");
         }
     });
 }
