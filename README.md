@@ -25,6 +25,7 @@ lucipane clear [--agent]              # erase everything (or only what agents dr
 lucipane draw box --x X --y Y --w W --h H         # draw as the agent, in blue,
 lucipane draw arrow --from X,Y --to X,Y           # in pixels of the capture image
 lucipane draw text --x X --y Y --text TEXT
+lucipane draw path --d "M 10 10 C 20 0, 40 0, 50 10"   # SVG path data: curves, circles, sketches
 lucipane wait [--out <file.png>]      # block until you leave draw mode after drawing,
                                       # then print the same JSON as capture
 ```

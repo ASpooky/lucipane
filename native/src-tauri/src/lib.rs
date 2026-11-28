@@ -128,8 +128,11 @@ fn on_second_instance(app: &AppHandle, argv: &[String]) {
             app.emit("clear", ClearRequest { agent_only })
         }
         Ok(Some(cli::Command::Draw(shape))) => {
+            // A path can be several strokes; the WebView adds each "agent-draw" event as one.
             let scale = app.state::<OverlayScale>().0;
-            app.emit("agent-draw", shape::to_stroke(&shape, scale))
+            shape::to_strokes(&shape, scale)
+                .into_iter()
+                .try_for_each(|stroke| app.emit("agent-draw", stroke))
         }
         _ => Ok(()),
     };

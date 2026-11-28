@@ -62,10 +62,16 @@ mean?", "the setting is here", numbered boxes for review comments.
 lucipane draw box   --x 640 --y 300 --w 420 --h 180
 lucipane draw arrow --from 200,820 --to 600,480      # head at --to
 lucipane draw text  --x 650 --y 270 --text "1"
+lucipane draw path  --d "M 600 400 C 650 350, 750 350, 800 400"   # SVG path data
 ```
 
 Coordinates are pixels of the latest `lucipane capture` image, so capture first and place
 marks from what you see in it.
+
+`draw path` takes SVG path data (the `d` attribute of `<path>`): `M`, `L`, `H`, `V`, `C`, `S`,
+`Q`, `T`, `A` and `Z`, absolute or relative. Use it to circle or underline something, for
+curved arrows, or to sketch a small picture. Each subpath (each `M`) becomes its own line.
+Curves are flattened to points; a path may have up to 4000 of them after flattening.
 
 - Draw only as part of answering the user, about the screen they asked about. Capture right
   before drawing: the screen may have changed (another app, a game) since the last capture.
