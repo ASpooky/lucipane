@@ -133,9 +133,16 @@ fn on_second_instance(app: &AppHandle, argv: &[String]) {
     // argv[0] is the program path. Capture and help run in the other process and never get
     // here, and a plain second launch has nothing to do.
     let result = match cli::parse(argv.get(1..).unwrap_or_default()) {
-        Ok(Some(cli::Command::Clear { agent_only })) => {
-            app.emit("clear", ClearRequest { agent_only })
-        }
+        Ok(Some(cli::Command::Clear {
+            agent_only,
+            all_desktops,
+        })) => app.emit(
+            "clear",
+            ClearRequest {
+                agent_only,
+                all_desktops,
+            },
+        ),
         Ok(Some(cli::Command::Draw(shape))) => {
             // A path can be several strokes; the WebView adds each "agent-draw" event as one.
             let scale = app.state::<OverlayScale>().0;
@@ -156,6 +163,8 @@ fn on_second_instance(app: &AppHandle, argv: &[String]) {
 struct ClearRequest {
     /// Erase only the agent's strokes.
     agent_only: bool,
+    /// Clear the panes of every virtual desktop, not just the current one.
+    all_desktops: bool,
 }
 
 /// Image (physical) pixels per CSS pixel on the overlay's display, for converting the

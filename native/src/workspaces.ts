@@ -30,3 +30,11 @@ export function switchPane(
   next.delete(to);
   return { parked: next, pane };
 }
+
+/** Apply `clear` to the board of every parked pane (`lucipane clear --all`). */
+export function clearPanes(
+  parked: ReadonlyMap<string, Pane>,
+  clear: (board: Board) => Board,
+): Map<string, Pane> {
+  return new Map([...parked].map(([id, pane]) => [id, { ...pane, board: clear(pane.board) }]));
+}

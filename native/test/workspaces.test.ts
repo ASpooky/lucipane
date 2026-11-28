@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { beginStroke, emptyBoard, endStroke, extendStroke } from "../src/board.ts";
-import { emptyPane, type Pane, switchPane } from "../src/workspaces.ts";
+import { beginStroke, clearBoard, emptyBoard, endStroke, extendStroke } from "../src/board.ts";
+import { clearPanes, emptyPane, type Pane, switchPane } from "../src/workspaces.ts";
 
 const p = (x: number, y: number) => ({ x, y });
 
@@ -37,5 +37,15 @@ describe("workspaces", () => {
     const parked = new Map<string, Pane>();
     switchPane(parked, "a", paneWithStroke(), "b");
     expect(parked.size).toBe(0);
+  });
+
+  it("clears every parked pane", () => {
+    const parked = new Map([
+      ["a", paneWithStroke()],
+      ["b", paneWithStroke()],
+    ]);
+    const cleared = clearPanes(parked, clearBoard);
+    expect([...cleared.values()].map((pane) => pane.board.strokes)).toEqual([[], []]);
+    expect(parked.get("a")?.board.strokes).toHaveLength(1);
   });
 });

@@ -21,7 +21,8 @@ Agents use the same executable as a CLI:
 
 ```sh
 lucipane capture [--out <file.png>]   # screenshot (with your drawings) + annotations as JSON
-lucipane clear [--agent]              # erase everything (or only what agents drew)
+lucipane clear [--agent] [--all]      # erase this desktop's pane (or only what agents drew);
+                                      # --all: every desktop's pane
 lucipane draw box --x X --y Y --w W --h H         # draw as the agent, in blue,
 lucipane draw arrow --from X,Y --to X,Y           # in pixels of the capture image
 lucipane draw text --x X --y Y --text TEXT

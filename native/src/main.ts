@@ -28,7 +28,7 @@ import {
 } from "./board.ts";
 import { applyPenEvent, type PenEvent } from "./pen.ts";
 import { type Palette, render } from "./render.ts";
-import { type Pane, switchPane } from "./workspaces.ts";
+import { clearPanes, type Pane, switchPane } from "./workspaces.ts";
 
 type Tool = "pen" | "box" | "arrow" | "eraser";
 
@@ -153,7 +153,9 @@ async function listenToRust(): Promise<void> {
   await listen<unknown>("clear", (e) => {
     const request = ClearEvent.safeParse(e.payload);
     if (!request.success) return console.error("invalid clear event", request.error);
-    update(request.data.agentOnly ? clearAuthor(board, "agent") : clearBoard(board));
+    const clear = (b: Board) => (request.data.agentOnly ? clearAuthor(b, "agent") : clearBoard(b));
+    if (request.data.allDesktops) parkedPanes = clearPanes(parkedPanes, clear);
+    update(clear(board));
   });
   await listen<unknown>("agent-draw", (e) => {
     const stroke = Stroke.safeParse(e.payload);
