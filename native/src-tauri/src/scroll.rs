@@ -1,6 +1,9 @@
 //! Following scrolls: when the wheel turns over another app, work out how far that app's
 //! content moves, so the overlay can move the marks drawn on it.
 
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 use crate::pen::Viewport;
@@ -27,6 +30,7 @@ pub struct ScrollEvent {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Target {
     pub window: u64,
+    pub pid: u32,
     /// Executable file name, e.g. `chrome.exe`.
     pub process: String,
     pub left: f64,
@@ -190,6 +194,86 @@ pub fn insets(process: &str) -> (f64, f64) {
     }
 }
 
+/// Whether to ask the app for its page's scroll position over UI Automation. Chromium exposes
+/// it on the page (and the page's exact area). VS Code is left out: a UI Automation client can
+/// make it offer its screen reader mode.
+pub fn reads_position(process: &str) -> bool {
+    matches!(
+        process.to_ascii_lowercase().as_str(),
+        "chrome.exe" | "msedge.exe" | "brave.exe" | "vivaldi.exe"
+    )
+}
+
+/// Where a scrollable page stands, as UI Automation reports it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Position {
+    /// How far down, 0 to 100 (-1 when it cannot scroll).
+    pub percent: f64,
+    /// How much of the page is visible, in percent of its height.
+    pub view: f64,
+    /// Height of the visible part, in CSS pixels.
+    pub height: f64,
+}
+
+impl Position {
+    /// How far the page can scroll in all, in CSS pixels.
+    pub fn range(&self) -> f64 {
+        if self.view <= 0.0 || self.view >= 100.0 {
+            return 0.0;
+        }
+        self.height * (100.0 / self.view - 1.0)
+    }
+
+    /// How far down it is scrolled, in CSS pixels.
+    pub fn offset(&self) -> f64 {
+        self.percent.clamp(0.0, 100.0) / 100.0 * self.range()
+    }
+}
+
+/// One run of wheel notches over one window, until scrolling settles. Marks move by the table's
+/// amount right away, but only as far as the page has room (known when its position could be
+/// read at the start); once it settles, the page's real movement corrects the rest.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Gesture {
+    pub window: u64,
+    pub rect: Rect,
+    start: Option<Position>,
+    /// How far the marks have been moved (down) so far.
+    moved: f64,
+}
+
+impl Gesture {
+    pub fn new(window: u64, rect: Rect, start: Option<Position>) -> Self {
+        Self {
+            window,
+            rect,
+            start,
+            moved: 0.0,
+        }
+    }
+
+    /// How far to move the marks for `dy` more of predicted movement.
+    pub fn step(&mut self, dy: f64) -> f64 {
+        let mut target = self.moved + dy;
+        if let Some(start) = self.start {
+            // The content moves up by at most what is left below, down by what is above.
+            target = target.clamp(-(start.range() - start.offset()), start.offset());
+        }
+        let applied = target - self.moved;
+        self.moved = target;
+        applied
+    }
+
+    /// How much to move the marks further once the page stopped at `now`; 0 when either
+    /// position is unknown.
+    pub fn settle(&self, now: Option<Position>) -> f64 {
+        match (self.start, now) {
+            (Some(start), Some(now)) => -(now.offset() - start.offset()) - self.moved,
+            _ => 0.0,
+        }
+    }
+}
+
 /// The event for `notches` wheel notches over `target` (positive: away from the user, which
 /// scrolls up and moves the content down), for an app scrolling `px` per notch with its
 /// content between `insets` (top, bottom).
@@ -215,21 +299,108 @@ pub fn event(
     }
 }
 
-/// The event for a wheel turn at a global physical position, if the window there belongs to
-/// an app we follow and no modifier turns the wheel into something else (zoom, sideways).
-pub fn follow(x: f64, y: f64, notches: f64, viewport: &Viewport) -> Option<ScrollEvent> {
+/// The predicted event for a wheel turn at a global physical position, if the window there
+/// belongs to an app we follow and no modifier turns the wheel into something else (zoom,
+/// sideways), and the window's process when its page position can be read.
+fn predict(
+    x: f64,
+    y: f64,
+    notches: f64,
+    viewport: &Viewport,
+) -> Option<(ScrollEvent, Option<u32>)> {
     if platform::modifier_held() {
         return None;
     }
     let target = platform::target_at(x, y)?;
     let px = notch_px(&target.process, read_vscode_settings)?;
-    Some(event(
-        &target,
-        notches,
-        px,
-        insets(&target.process),
-        viewport,
-    ))
+    let event = event(&target, notches, px, insets(&target.process), viewport);
+    Some((event, reads_position(&target.process).then_some(target.pid)))
+}
+
+/// After the last notch, how long to wait for another before the gesture ends.
+const GESTURE_GAP: Duration = Duration::from_millis(200);
+/// How often to read the page position while smooth scrolling runs out.
+const SETTLE_POLL: Duration = Duration::from_millis(50);
+
+/// Turn wheel notches at global cursor positions into "scroll" events, for as long as the
+/// sender lives. Runs on its own thread: it waits for scrolling to settle.
+pub fn follow_wheel(
+    wheel: Receiver<(f64, f64, f64)>,
+    viewport: Viewport,
+    emit: impl Fn(ScrollEvent),
+) {
+    platform::init_thread();
+    let mut current: Option<(Gesture, Option<platform::Page>)> = None;
+    loop {
+        let next = if current.is_some() {
+            wheel.recv_timeout(GESTURE_GAP)
+        } else {
+            wheel.recv().map_err(|_| RecvTimeoutError::Disconnected)
+        };
+        match next {
+            Ok((x, y, notches)) => {
+                let Some((predicted, pid)) = predict(x, y, notches, &viewport) else {
+                    continue;
+                };
+                if current
+                    .as_ref()
+                    .is_some_and(|(gesture, _)| gesture.window != predicted.window)
+                    && let Some(done) = current.take()
+                {
+                    settle(done, &viewport, &emit);
+                }
+                let (gesture, _) = current.get_or_insert_with(|| {
+                    let page = pid.and_then(|pid| platform::page_at(x, y, pid));
+                    let rect = page.as_ref().and_then(|p| p.rect(&viewport));
+                    let start = page.as_ref().and_then(|p| p.position(&viewport));
+                    let gesture =
+                        Gesture::new(predicted.window, rect.unwrap_or(predicted.rect), start);
+                    (gesture, page)
+                });
+                let dy = gesture.step(predicted.dy);
+                if dy != 0.0 {
+                    emit(ScrollEvent {
+                        window: gesture.window,
+                        rect: gesture.rect,
+                        dy,
+                    });
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                if let Some(done) = current.take() {
+                    settle(done, &viewport, &emit);
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => return,
+        }
+    }
+}
+
+/// Once the wheel stopped: wait for smooth scrolling to end (two equal readings), then move
+/// the marks by whatever the page really moved beyond what they already did.
+fn settle(
+    (gesture, page): (Gesture, Option<platform::Page>),
+    viewport: &Viewport,
+    emit: &impl Fn(ScrollEvent),
+) {
+    let Some(page) = page else { return };
+    let mut last = page.position(viewport);
+    for _ in 0..20 {
+        std::thread::sleep(SETTLE_POLL);
+        let now = page.position(viewport);
+        if now == last {
+            break;
+        }
+        last = now;
+    }
+    let dy = gesture.settle(last);
+    if dy.abs() >= 0.5 {
+        emit(ScrollEvent {
+            window: gesture.window,
+            rect: gesture.rect,
+            dy,
+        });
+    }
 }
 
 fn read_vscode_settings(dir: &str) -> Option<String> {
@@ -336,12 +507,102 @@ mod platform {
             let path = String::from_utf16_lossy(&path[..len as usize]);
             Some(Target {
                 window: window as u64,
+                pid,
                 process: path.rsplit('\\').next().unwrap_or_default().to_string(),
                 left: f64::from(rect.left),
                 top: f64::from(rect.top),
                 right: f64::from(rect.right),
                 bottom: f64::from(rect.bottom),
             })
+        }
+    }
+
+    pub use uia::{Page, init_thread, page_at};
+
+    /// A web page's scroll position over UI Automation (COM, hence the `windows` crate).
+    mod uia {
+        use super::super::{Position, Rect};
+        use crate::pen::Viewport;
+        use windows::Win32::Foundation::POINT;
+        use windows::Win32::System::Com::{
+            CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+        };
+        use windows::Win32::UI::Accessibility::{
+            CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationScrollPattern,
+            UIA_DocumentControlTypeId, UIA_ScrollPatternId,
+        };
+
+        /// The page under the cursor, for reading where it is scrolled to.
+        pub struct Page {
+            element: IUIAutomationElement,
+            scroll: IUIAutomationScrollPattern,
+        }
+
+        pub fn init_thread() {
+            // SAFETY: called once, first thing on the follower thread.
+            let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        }
+
+        /// The vertically scrollable page (document) at a point, if it belongs to process `pid`.
+        /// The check matters: UI Automation, like `WindowFromPoint`, can see windows that other
+        /// GlazeWM workspaces hid.
+        pub fn page_at(x: f64, y: f64, pid: u32) -> Option<Page> {
+            // SAFETY: COM calls on interfaces we hold; failures come back as errors.
+            unsafe {
+                let automation: IUIAutomation =
+                    CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+                let walker = automation.ControlViewWalker().ok()?;
+                let point = POINT {
+                    x: x as i32,
+                    y: y as i32,
+                };
+                let mut element = automation.ElementFromPoint(point).ok()?;
+                if u32::try_from(element.CurrentProcessId().ok()?).ok()? != pid {
+                    return None;
+                }
+                // Climb to the page, past the links and groups under the cursor.
+                for _ in 0..64 {
+                    if element.CurrentControlType().ok()? == UIA_DocumentControlTypeId
+                        && let Ok(scroll) = element
+                            .GetCurrentPatternAs::<IUIAutomationScrollPattern>(UIA_ScrollPatternId)
+                        && scroll.CurrentVerticallyScrollable().ok()?.as_bool()
+                    {
+                        return Some(Page { element, scroll });
+                    }
+                    element = walker.GetParentElement(&element).ok()?;
+                }
+                None
+            }
+        }
+
+        impl Page {
+            /// The page's visible area, in the overlay's CSS pixels.
+            pub fn rect(&self, viewport: &Viewport) -> Option<Rect> {
+                // SAFETY: a COM call on an element we hold.
+                let r = unsafe { self.element.CurrentBoundingRectangle() }.ok()?;
+                let (x, y) = viewport.to_local(f64::from(r.left), f64::from(r.top));
+                Some(Rect {
+                    x,
+                    y,
+                    width: f64::from(r.right - r.left) / viewport.scale,
+                    height: f64::from(r.bottom - r.top) / viewport.scale,
+                })
+            }
+
+            pub fn position(&self, viewport: &Viewport) -> Option<Position> {
+                // SAFETY: COM calls on a pattern we hold.
+                let (percent, view) = unsafe {
+                    (
+                        self.scroll.CurrentVerticalScrollPercent().ok()?,
+                        self.scroll.CurrentVerticalViewSize().ok()?,
+                    )
+                };
+                Some(Position {
+                    percent,
+                    view,
+                    height: self.rect(viewport)?.height,
+                })
+            }
         }
     }
 }
@@ -357,6 +618,25 @@ mod platform {
 
     pub fn target_at(_x: f64, _y: f64) -> Option<Target> {
         None
+    }
+
+    pub fn init_thread() {}
+
+    /// Never constructed: there is no page to read here.
+    pub enum Page {}
+
+    pub fn page_at(_x: f64, _y: f64, _pid: u32) -> Option<Page> {
+        None
+    }
+
+    impl Page {
+        pub fn rect(&self, _viewport: &crate::pen::Viewport) -> Option<super::Rect> {
+            match *self {}
+        }
+
+        pub fn position(&self, _viewport: &crate::pen::Viewport) -> Option<super::Position> {
+            match *self {}
+        }
     }
 }
 
@@ -441,6 +721,7 @@ mod tests {
         };
         let target = Target {
             window: 42,
+            pid: 7,
             process: "chrome.exe".into(),
             left: 150.0,
             top: 300.0,
@@ -473,6 +754,80 @@ mod tests {
         assert_eq!(insets("Code.exe"), (90.0, 22.0));
         assert_eq!(insets("WindowsTerminal.exe"), (40.0, 0.0));
         assert_eq!(insets("notepad.exe"), (0.0, 0.0));
+    }
+
+    fn page(percent: f64, view: f64, height: f64) -> Position {
+        Position {
+            percent,
+            view,
+            height,
+        }
+    }
+
+    fn rect() -> Rect {
+        Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 800.0,
+            height: 600.0,
+        }
+    }
+
+    #[test]
+    fn works_out_how_far_a_page_can_scroll_and_where_it_is() {
+        // 600 px visible out of 2400: 1800 px to scroll, a quarter of the way down.
+        let p = page(25.0, 25.0, 600.0);
+        assert_eq!((p.range(), p.offset()), (1800.0, 450.0));
+        // Everything visible (UIA reports 100 %, or -1 when it cannot scroll).
+        assert_eq!(page(-1.0, 100.0, 600.0).range(), 0.0);
+    }
+
+    #[test]
+    fn stops_marks_where_the_page_stops() {
+        // 100 px from the bottom: three notches down move the marks up by 100 px, not 300.
+        let mut g = Gesture::new(1, rect(), Some(page(100.0 - 100.0 / 18.0, 25.0, 600.0)));
+        let moved: f64 = [-100.0, -100.0, -100.0].map(|dy| g.step(dy)).iter().sum();
+        assert!((moved + 100.0).abs() < 1e-9, "moved {moved}");
+        // At the top, scrolling up moves nothing.
+        let mut g = Gesture::new(1, rect(), Some(page(0.0, 25.0, 600.0)));
+        assert_eq!(g.step(100.0), 0.0);
+        // And back down works again within the same gesture.
+        assert_eq!(g.step(-100.0), -100.0);
+    }
+
+    #[test]
+    fn follows_the_table_when_the_position_is_unknown() {
+        let mut g = Gesture::new(1, rect(), None);
+        assert_eq!(g.step(-100.0) + g.step(-100.0), -200.0);
+        assert_eq!(g.settle(None), 0.0);
+    }
+
+    #[test]
+    fn corrects_by_how_far_the_page_really_moved() {
+        // Predicted 300 px; the page went from 450 to 600 px down, i.e. moved 150 px.
+        let mut g = Gesture::new(1, rect(), Some(page(25.0, 25.0, 600.0)));
+        g.step(-300.0);
+        let now = page(100.0 / 3.0, 25.0, 600.0);
+        assert!((g.settle(Some(now)) - 150.0).abs() < 1e-9);
+        // At the bottom nothing moves at first; if the page then loads more and scrolls on (to
+        // 700 px of a 3000 px page, 2400 px of range), the marks catch up by 100 px.
+        let mut g = Gesture::new(1, rect(), Some(page(100.0, 50.0, 600.0)));
+        assert_eq!(g.step(-100.0), 0.0);
+        let grown = page(700.0 / 24.0, 20.0, 600.0);
+        assert!(
+            (g.settle(Some(grown)) + 100.0).abs() < 1e-9,
+            "{}",
+            g.settle(Some(grown))
+        );
+    }
+
+    #[test]
+    fn reads_page_positions_only_from_browsers() {
+        assert!(reads_position("chrome.exe"));
+        assert!(reads_position("msedge.exe"));
+        // Asking VS Code over UI Automation can switch it into screen reader mode.
+        assert!(!reads_position("Code.exe"));
+        assert!(!reads_position("WindowsTerminal.exe"));
     }
 
     #[test]

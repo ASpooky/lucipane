@@ -271,16 +271,14 @@ fn spawn_mouse_hook(app: AppHandle, viewport: Viewport) {
 }
 
 /// Turn wheel notches at a cursor position into "scroll" events for the WebView. Looking up
-/// the window and its app takes system calls and a file read, which must not happen inside
-/// the mouse hook: Windows drops a hook that answers too slowly.
+/// the window, its app and its page takes system calls, a file read and waiting for scrolling
+/// to settle, none of which may happen inside the mouse hook: Windows drops a slow hook.
 fn spawn_scroll_follower(app: AppHandle, viewport: Viewport) -> mpsc::Sender<(f64, f64, f64)> {
     let (sender, receiver) = mpsc::channel::<(f64, f64, f64)>();
     std::thread::spawn(move || {
-        for (x, y, notches) in receiver {
-            if let Some(event) = scroll::follow(x, y, notches, &viewport) {
-                let _ = app.emit("scroll", event);
-            }
-        }
+        scroll::follow_wheel(receiver, viewport, |event| {
+            let _ = app.emit("scroll", event);
+        });
     });
     sender
 }

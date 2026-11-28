@@ -2587,6 +2587,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tungstenite",
+ "windows",
  "windows-sys 0.61.2",
  "xcap",
 ]
