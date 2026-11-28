@@ -37,6 +37,12 @@ up a submission number in that file, which is what `wait` watches. `clear` and `
 forwarded to the running overlay.
 No network port is opened.
 
+Each virtual desktop has its own pane: a macOS Space (every full-screen window gets one) or,
+on Windows, a GlazeWM workspace (read over GlazeWM's IPC on `localhost:6123`). Drawings stay
+with their desktop and come back when you return; `capture`, `wait`, `clear` and `draw` work on
+the desktop you are on. Without GlazeWM, Windows has a single pane. On macOS the overlay is a
+non-activating panel without a Dock icon, so it also floats over full-screen apps.
+
 ### Agent skill
 
 [`skills/lucipane/SKILL.md`](skills/lucipane/SKILL.md) teaches an agent when and how to use
