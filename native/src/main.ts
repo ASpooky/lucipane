@@ -12,6 +12,7 @@ import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   addStroke,
+  addText,
   type Board,
   beginArrow,
   beginBox,
@@ -22,6 +23,7 @@ import {
   endStroke,
   eraseAt,
   extendStroke,
+  MAX_TEXT_LENGTH,
   type Point,
   toSnapshot,
   userStrokesChanged,
@@ -30,22 +32,31 @@ import { applyPenEvent, type PenEvent } from "./pen.ts";
 import { type Palette, render } from "./render.ts";
 import { clearPanes, type Pane, switchPane } from "./workspaces.ts";
 
-type Tool = "pen" | "box" | "arrow" | "eraser";
+type Tool = "pen" | "box" | "arrow" | "eraser" | "text";
 
 const TOOL_LABELS: Record<Tool, string> = {
   pen: "Pen",
   box: "Box",
   arrow: "Arrow",
   eraser: "Eraser",
+  text: "Text",
 };
 
-const BEGIN: Record<Exclude<Tool, "eraser">, typeof beginStroke> = {
+const BEGIN: Record<Exclude<Tool, "eraser" | "text">, typeof beginStroke> = {
   pen: beginStroke,
   box: beginBox,
   arrow: beginArrow,
 };
 
 const ERASER_RADIUS = 12;
+
+// Typing a label: the text tool opens this input where the user clicked.
+const textInput = document.createElement("input");
+textInput.id = "text-input";
+textInput.maxLength = MAX_TEXT_LENGTH;
+textInput.hidden = true;
+document.body.append(textInput);
+let textAt: Point | null = null;
 
 function setupCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
   const canvas = document.querySelector<HTMLCanvasElement>("#board");
@@ -100,7 +111,10 @@ function setDrawMode(enabled: boolean): void {
   const leaving = drawMode && !enabled;
   drawMode = enabled;
   erasing = false;
-  if (!enabled) update(endStroke(board));
+  if (!enabled) {
+    commitText();
+    update(endStroke(board));
+  }
   if (leaving) submit();
   document.body.classList.toggle("draw-mode", enabled);
 }
@@ -115,6 +129,7 @@ function submit(): void {
 
 function switchWorkspace(next: string): void {
   if (next === workspace) return;
+  commitText();
   const switched = switchPane(parkedPanes, workspace, { board, submitted: submittedStrokes }, next);
   parkedPanes = switched.parked;
   workspace = next;
@@ -125,9 +140,37 @@ function switchWorkspace(next: string): void {
   saveBoard();
 }
 
+function openText(at: Point): void {
+  commitText();
+  textAt = at;
+  textInput.value = "";
+  textInput.style.left = `${at.x}px`;
+  textInput.style.top = `${at.y}px`;
+  textInput.hidden = false;
+  // The click that opened the input would otherwise take the focus back to the canvas.
+  setTimeout(() => textInput.focus());
+}
+
+function closeText(): void {
+  textAt = null;
+  textInput.hidden = true;
+  textInput.value = "";
+}
+
+/** Place what was typed, if anything; the input closes either way. */
+function commitText(): void {
+  if (!textAt) return;
+  const at = textAt;
+  const text = textInput.value;
+  closeText();
+  update(addText(board, at, text));
+}
+
 function setTool(next: Tool): void {
   tool = next;
   document.body.classList.toggle("tool-eraser", next === "eraser");
+  document.body.classList.toggle("tool-text", next === "text");
+  if (next !== "text") commitText();
   if (hudTool) hudTool.textContent = TOOL_LABELS[next];
 }
 
@@ -179,6 +222,11 @@ function listenToPointer(): void {
   canvas.addEventListener("pointerdown", (e) => {
     // Only the left button; the middle button is handled by the global hook.
     if (!drawMode || e.button !== LEFT) return;
+    if (tool === "text") {
+      e.preventDefault();
+      openText(toPoint(e));
+      return;
+    }
     canvas.setPointerCapture(e.pointerId);
     if (tool === "eraser") {
       erasing = true;
@@ -189,7 +237,7 @@ function listenToPointer(): void {
     }
   });
   canvas.addEventListener("pointermove", (e) => {
-    if (!drawMode || !(e.buttons & LEFT_HELD)) return;
+    if (!drawMode || tool === "text" || !(e.buttons & LEFT_HELD)) return;
     if (erasing) update(eraseAt(board, toPoint(e), ERASER_RADIUS));
     else update(extendStroke(board, toPoint(e)));
   });
@@ -203,6 +251,19 @@ function listenToPointer(): void {
 }
 
 function listenToKeys(): void {
+  textInput.addEventListener("keydown", (e) => {
+    // Typing must not switch tools or leave draw mode.
+    e.stopPropagation();
+    // Enter or Esc while an IME is composing belongs to the IME.
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitText();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeText();
+    }
+  });
   window.addEventListener("keydown", (e) => {
     if (!drawMode || e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
     switch (e.key.toLowerCase()) {
@@ -214,6 +275,9 @@ function listenToKeys(): void {
         break;
       case "b":
         setTool(tool === "box" ? "pen" : "box");
+        break;
+      case "t":
+        setTool(tool === "text" ? "pen" : "text");
         break;
       case "c":
         update(clearBoard(board));
