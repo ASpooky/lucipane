@@ -1,6 +1,7 @@
 {
-  "contractVersion": 2,
+  "contractVersion": 3,
   "scale": 1.5,
+  "submission": 3,
   "strokes": [
     {
       "kind": "freehand",

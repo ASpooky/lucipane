@@ -1,13 +1,14 @@
 //! The board file (contract: `contract/src/snapshot.ts`).
 //! The overlay's WebView sends a snapshot whenever the finished strokes change; we write it
-//! to disk so the `lucipane capture` CLI, a separate process, can read it.
+//! to disk so the `lucipane capture` and `lucipane wait` CLI commands, separate processes,
+//! can read it.
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 /// Must match `CONTRACT_VERSION` in `contract/src/version.ts`.
-pub const CONTRACT_VERSION: u32 = 2;
+pub const CONTRACT_VERSION: u32 = 3;
 
 /// Must match `identifier` in tauri.conf.json.
 const APP_IDENTIFIER: &str = "dev.aspooky.lucipane";
@@ -58,6 +59,8 @@ pub struct BoardSnapshot {
     pub contract_version: u32,
     /// Physical (screenshot) pixels per CSS pixel.
     pub scale: f64,
+    /// How many times the user has handed their drawing over; `lucipane wait` watches it.
+    pub submission: u64,
     /// Finished strokes in CSS pixels.
     pub strokes: Vec<Stroke>,
 }
@@ -67,6 +70,7 @@ impl BoardSnapshot {
         Self {
             contract_version: CONTRACT_VERSION,
             scale,
+            submission: 0,
             strokes: Vec::new(),
         }
     }
@@ -113,6 +117,7 @@ mod tests {
     fn parses_the_shared_contract_fixture() {
         let snapshot = BoardSnapshot::parse(FIXTURE).unwrap();
         assert_eq!(snapshot.scale, 1.5);
+        assert_eq!(snapshot.submission, 3);
         assert_eq!(snapshot.strokes.len(), 4);
         assert_eq!(
             snapshot.strokes[1],
@@ -141,13 +146,21 @@ mod tests {
 
     #[test]
     fn rejects_another_contract_version() {
-        let json = r#"{"contractVersion":999,"scale":1,"strokes":[]}"#;
+        let json = r#"{"contractVersion":999,"scale":1,"submission":0,"strokes":[]}"#;
         assert!(BoardSnapshot::parse(json).is_err());
     }
 
     #[test]
+    fn rejects_a_missing_submission_count() {
+        let json = format!(r#"{{"contractVersion":{CONTRACT_VERSION},"scale":1,"strokes":[]}}"#);
+        assert!(BoardSnapshot::parse(&json).is_err());
+    }
+
+    #[test]
     fn rejects_a_non_positive_scale() {
-        let json = format!(r#"{{"contractVersion":{CONTRACT_VERSION},"scale":0,"strokes":[]}}"#);
+        let json = format!(
+            r#"{{"contractVersion":{CONTRACT_VERSION},"scale":0,"submission":0,"strokes":[]}}"#
+        );
         let json = json.as_str();
         assert!(BoardSnapshot::parse(json).is_err());
     }
@@ -158,6 +171,7 @@ mod tests {
         assert_eq!(snapshot.contract_version, CONTRACT_VERSION);
         assert_eq!(snapshot.scale, 2.0);
         assert!(snapshot.strokes.is_empty());
+        assert_eq!(snapshot.submission, 0);
     }
 
     #[test]

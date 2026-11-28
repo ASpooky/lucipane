@@ -19,7 +19,7 @@ const box = { kind: "box", author: "user", from: { x: 0, y: 0 }, to: { x: 10, y:
 
 describe("contract", () => {
   it("exposes a contract version", () => {
-    expect(CONTRACT_VERSION).toBe(2);
+    expect(CONTRACT_VERSION).toBe(3);
   });
 });
 
@@ -60,13 +60,26 @@ describe("BoardSnapshot (overlay app -> board file -> CLI)", () => {
   });
 
   it("rejects another contract version", () => {
-    const snapshot = { contractVersion: CONTRACT_VERSION + 1, scale: 1, strokes: [] };
+    const snapshot = {
+      contractVersion: CONTRACT_VERSION + 1,
+      scale: 1,
+      submission: 0,
+      strokes: [],
+    };
     expect(BoardSnapshot.safeParse(snapshot).success).toBe(false);
   });
 
   it("rejects a non-positive scale", () => {
-    const snapshot = { contractVersion: CONTRACT_VERSION, scale: 0, strokes: [] };
+    const snapshot = { contractVersion: CONTRACT_VERSION, scale: 0, submission: 0, strokes: [] };
     expect(BoardSnapshot.safeParse(snapshot).success).toBe(false);
+  });
+
+  it("requires a non-negative integer submission count", () => {
+    const base = { contractVersion: CONTRACT_VERSION, scale: 1, strokes: [] };
+    expect(BoardSnapshot.safeParse(base).success).toBe(false);
+    expect(BoardSnapshot.safeParse({ ...base, submission: -1 }).success).toBe(false);
+    expect(BoardSnapshot.safeParse({ ...base, submission: 1.5 }).success).toBe(false);
+    expect(BoardSnapshot.safeParse({ ...base, submission: 7 }).success).toBe(true);
   });
 });
 

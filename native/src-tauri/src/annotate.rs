@@ -186,6 +186,7 @@ mod tests {
         BoardSnapshot {
             contract_version: crate::board::CONTRACT_VERSION,
             scale,
+            submission: 0,
             strokes,
         }
     }

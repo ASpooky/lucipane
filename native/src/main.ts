@@ -4,6 +4,7 @@
 //   left-drag draws. Single keys: A arrow, B box, E eraser, C clear, Esc exit.
 // - Finished strokes are saved to the board file for the `lucipane capture` CLI, and
 //   `lucipane clear` and `lucipane draw` (agents drawing in blue) arrive as events.
+// - Leaving draw mode hands the drawing over to an agent waiting in `lucipane wait`.
 // - In a plain browser (http://localhost:1420) draw mode is always on, for quick testing.
 
 import { ClearEvent, Stroke } from "@lucipane/contract";
@@ -23,6 +24,7 @@ import {
   extendStroke,
   type Point,
   toSnapshot,
+  userStrokesChanged,
 } from "./board.ts";
 import { applyPenEvent, type PenEvent } from "./pen.ts";
 import { type Palette, render } from "./render.ts";
@@ -67,6 +69,10 @@ let board: Board = emptyBoard();
 let drawMode = !isTauri();
 let tool: Tool = "pen";
 let erasing = false;
+// Handing the drawing over to an agent running `lucipane wait`: leaving draw mode with the
+// user's strokes changed counts the submission up, and the board file carries the count.
+let submission = 0;
+let submittedStrokes = board.strokes;
 
 function update(next: Board): void {
   if (next === board) return;
@@ -79,17 +85,27 @@ function update(next: Board): void {
 /** Keep the board file current for `lucipane capture`. Only finished strokes count. */
 function saveBoard(): void {
   if (!isTauri()) return;
-  const snapshot = toSnapshot(board, window.devicePixelRatio);
+  const snapshot = toSnapshot(board, window.devicePixelRatio, submission);
   invoke("save_board", { snapshot }).catch((e: unknown) => {
     console.error("failed to save the board", e);
   });
 }
 
 function setDrawMode(enabled: boolean): void {
+  const leaving = drawMode && !enabled;
   drawMode = enabled;
   erasing = false;
   if (!enabled) update(endStroke(board));
+  if (leaving) submit();
   document.body.classList.toggle("draw-mode", enabled);
+}
+
+/** Hand the drawing over, unless the user's strokes are the same as last time. */
+function submit(): void {
+  if (!userStrokesChanged(submittedStrokes, board.strokes)) return;
+  submission += 1;
+  submittedStrokes = board.strokes;
+  saveBoard();
 }
 
 function setTool(next: Tool): void {

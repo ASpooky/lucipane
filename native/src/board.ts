@@ -148,10 +148,22 @@ function distanceToSegment(p: Point, a: Point, b: Point): number {
 
 /**
  * The document written to the board file for the `lucipane capture` CLI.
- * `scale` is physical pixels per CSS pixel (window.devicePixelRatio).
+ * `scale` is physical pixels per CSS pixel (window.devicePixelRatio); `submission` counts
+ * the times the user handed their drawing over (see the contract).
  */
-export function toSnapshot(board: Board, scale: number): BoardSnapshot {
-  return { contractVersion: CONTRACT_VERSION, scale, strokes: board.strokes };
+export function toSnapshot(board: Board, scale: number, submission: number): BoardSnapshot {
+  return { contractVersion: CONTRACT_VERSION, scale, submission, strokes: board.strokes };
+}
+
+/**
+ * Whether the user's own strokes differ between two versions of the finished strokes.
+ * Strokes are immutable, so comparing them by identity is enough. The agent's strokes do
+ * not count: only the user hands a drawing over.
+ */
+export function userStrokesChanged(before: readonly Stroke[], after: readonly Stroke[]): boolean {
+  const a = before.filter((s) => s.author === "user");
+  const b = after.filter((s) => s.author === "user");
+  return a.length !== b.length || a.some((s, i) => s !== b[i]);
 }
 
 /** Add a finished stroke (e.g. one an agent drew), leaving any stroke in progress alone. */

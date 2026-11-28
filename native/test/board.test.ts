@@ -16,6 +16,7 @@ import {
   TEXT_SIZE,
   textBounds,
   toSnapshot,
+  userStrokesChanged,
 } from "../src/board.ts";
 
 const p = (x: number, y: number) => ({ x, y });
@@ -177,16 +178,41 @@ describe("toSnapshot", () => {
   it("keeps finished strokes only and records the scale and contract version", () => {
     const finished = endStroke(beginStroke(emptyBoard(), p(1, 1)));
     const b = beginStroke(finished, p(9, 9));
-    expect(toSnapshot(b, 1.25)).toEqual({
+    expect(toSnapshot(b, 1.25, 4)).toEqual({
       contractVersion: CONTRACT_VERSION,
       scale: 1.25,
+      submission: 4,
       strokes: finished.strokes,
     });
   });
 
   it("produces a document the contract accepts", () => {
     const b = endStroke(beginBox(emptyBoard(), p(0, 0)));
-    expect(BoardSnapshot.safeParse(toSnapshot(b, 2)).success).toBe(true);
+    expect(BoardSnapshot.safeParse(toSnapshot(b, 2, 0)).success).toBe(true);
+  });
+});
+
+describe("userStrokesChanged", () => {
+  const user = endStroke(beginStroke(emptyBoard(), p(0, 0)));
+  const agentArrow = { kind: "arrow", author: "agent", from: p(0, 0), to: p(5, 5) } as const;
+
+  it("is false for the same strokes", () => {
+    expect(userStrokesChanged(user.strokes, user.strokes)).toBe(false);
+  });
+
+  it("ignores strokes the agent added or removed", () => {
+    const withAgent = addStroke(user, agentArrow);
+    expect(userStrokesChanged(user.strokes, withAgent.strokes)).toBe(false);
+    expect(userStrokesChanged(withAgent.strokes, clearAuthor(withAgent, "agent").strokes)).toBe(
+      false,
+    );
+  });
+
+  it("is true when the user draws, erases or clears", () => {
+    const more = endStroke(beginBox(user, p(9, 9)));
+    expect(userStrokesChanged(user.strokes, more.strokes)).toBe(true);
+    expect(userStrokesChanged(more.strokes, user.strokes)).toBe(true);
+    expect(userStrokesChanged(user.strokes, clearBoard(user).strokes)).toBe(true);
   });
 });
 
